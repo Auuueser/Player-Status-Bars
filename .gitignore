@@ -1,0 +1,13 @@
+bin/
+obj/
+tmpbin/
+tmpobj/
+*.user
+*.suo
+*.cache
+*.log
+*.dll
+*.pdb
+*.zip
+.vs/
+.idea/

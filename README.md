@@ -60,3 +60,9 @@ Most options are applied at runtime through LethalConfig.
 ## Known limitations
 
 This is a pure client-side mod. It can only display data that the local client can read from the game state. It does not add custom networking and does not attempt to synchronize hidden owner-only recovery values. Critical health display is therefore based on the remote player state and conservative client-side fallback rules.
+
+## License
+
+Player Status Bars is released under the MIT License. See `LICENSE` for the full license text.
+
+LethalConfig is an independent third-party dependency used to expose runtime configuration controls. The LethalConfig project is published under GPL-3.0; see the LethalConfig project and package pages for its license terms.

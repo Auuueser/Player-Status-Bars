@@ -6,7 +6,7 @@ using UnityEngine;
 
 namespace OtherPlayerStatusBars;
 
-[BepInDependency("ainavt.lethalconfig", BepInDependency.DependencyFlags.SoftDependency)]
+[BepInDependency("ainavt.lc.lethalconfig", BepInDependency.DependencyFlags.SoftDependency)]
 [BepInPlugin(MyPluginInfo.PluginGuid, MyPluginInfo.PluginName, MyPluginInfo.PluginVersion)]
 public sealed class Plugin : BaseUnityPlugin
 {

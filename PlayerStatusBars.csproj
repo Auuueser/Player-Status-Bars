@@ -13,7 +13,6 @@
     <LethalCompanyDir Condition="'$(LethalCompanyDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Lethal Company</LethalCompanyDir>
     <ManagedDir Condition="'$(ManagedDir)' == ''">$(LethalCompanyDir)\Lethal Company_Data\Managed</ManagedDir>
     <BepInExDir Condition="'$(BepInExDir)' == ''">$(LethalCompanyDir)\BepInEx</BepInExDir>
-    <LethalConfigDir Condition="'$(LethalConfigDir)' == ''">$(BepInExDir)\plugins\AinaVT-LethalConfig\LethalConfig</LethalConfigDir>
   </PropertyGroup>
 
   <ItemGroup>
@@ -44,9 +43,9 @@
     <Reference Include="Unity.Netcode.Runtime">
       <HintPath>$(ManagedDir)\Unity.Netcode.Runtime.dll</HintPath>
     </Reference>
-    <Reference Include="LethalConfig">
-      <HintPath>$(LethalConfigDir)\LethalConfig.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="obj\**;tmpobj\**;tmpbin\**;tmpbin_sync\**;tmpbin_sync2\**" />
   </ItemGroup>
 </Project>

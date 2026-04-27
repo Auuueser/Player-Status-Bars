@@ -64,6 +64,8 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 
 	private bool suppressInitialStaleCriticalState;
 
+	private bool suppressInitialStaleHealthState;
+
 	private bool hasCompletedInitialStateStabilization;
 
 	private bool hasObservedStableNonCriticalState;
@@ -151,7 +153,7 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 		bool rawCriticalState = isCriticallyInjured || isBleedingHeavily;
 		UpdateInitialStateStabilization(rawCriticalState, rawHealth);
 		bool isInCriticalState = rawCriticalState && !suppressInitialStaleCriticalState;
-		int displayHealth = rawHealth;
+		int displayHealth = suppressInitialStaleHealthState && rawHealth == 20 && !isInCriticalState ? 100 : rawHealth;
 		bool showLowHealthFallback = false;
 		if (!isInCriticalState && rawHealth < 20 && !targetPlayer.isPlayerDead)
 		{
@@ -263,7 +265,7 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 
 	private void UpdateInitialStateStabilization(bool rawCriticalState, int rawHealth)
 	{
-		if (!rawCriticalState)
+		if (!rawCriticalState && rawHealth > 20)
 		{
 			hasObservedStableNonCriticalState = true;
 		}
@@ -271,9 +273,20 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 		if (!hasCompletedInitialStateStabilization)
 		{
 			float age = Time.unscaledTime - initializedAtTime;
-			if (age <= InitialStateStabilizationDelay && !hasObservedStableNonCriticalState && rawCriticalState && rawHealth >= 20)
+			if (age <= InitialStateStabilizationDelay && !hasObservedStableNonCriticalState)
 			{
-				suppressInitialStaleCriticalState = true;
+				// Late-join and extended-player mods can briefly expose cloned/default player state.
+				// Keep that initial stale 20 HP / critical flag from becoming a persistent bar state.
+				if (rawHealth == 20)
+				{
+					suppressInitialStaleHealthState = true;
+				}
+
+				if (rawCriticalState && rawHealth >= 20)
+				{
+					suppressInitialStaleCriticalState = true;
+					suppressInitialStaleHealthState = true;
+				}
 			}
 			else if (age > InitialStateStabilizationDelay)
 			{
@@ -281,9 +294,11 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 			}
 		}
 
-		if (suppressInitialStaleCriticalState && (!rawCriticalState || rawHealth < 20 || targetPlayer.isPlayerDead))
+		if ((suppressInitialStaleCriticalState || suppressInitialStaleHealthState)
+			&& (targetPlayer.isPlayerDead || rawHealth < 20 || (!rawCriticalState && rawHealth > 20)))
 		{
 			suppressInitialStaleCriticalState = false;
+			suppressInitialStaleHealthState = false;
 		}
 	}
 
@@ -291,6 +306,7 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 	{
 		initializedAtTime = Time.unscaledTime;
 		suppressInitialStaleCriticalState = false;
+		suppressInitialStaleHealthState = false;
 		hasCompletedInitialStateStabilization = false;
 		hasObservedStableNonCriticalState = false;
 	}

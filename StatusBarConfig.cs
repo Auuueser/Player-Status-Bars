@@ -1,9 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using BepInEx.Configuration;
-using LethalConfig;
-using LethalConfig.ConfigItems;
-using LethalConfig.ConfigItems.Options;
 using UnityEngine;
 
 namespace OtherPlayerStatusBars;
@@ -149,66 +147,107 @@ internal sealed class StatusBarConfig
 	{
 		public static void Register(StatusBarConfig config)
 		{
-			LethalConfigManager.AddConfigItem(new BoolCheckBoxConfigItem(config.enabled, new BoolCheckBoxOptions
-			{
-				RequiresRestart = false
-			}));
-			LethalConfigManager.AddConfigItem(new BoolCheckBoxConfigItem(config.hideInOrbit, new BoolCheckBoxOptions
-			{
-				RequiresRestart = false
-			}));
-			LethalConfigManager.AddConfigItem(new FloatSliderConfigItem(config.maxDistance, new FloatSliderOptions
-			{
-				Min = 2f,
-				Max = 80f,
-				RequiresRestart = false
-			}));
-			LethalConfigManager.AddConfigItem(new FloatSliderConfigItem(config.headOffset, new FloatSliderOptions
-			{
-				Min = 0f,
-				Max = 2f,
-				RequiresRestart = false
-			}));
-			LethalConfigManager.AddConfigItem(new FloatSliderConfigItem(config.barSpacing, new FloatSliderOptions
-			{
-				Min = 6f,
-				Max = 48f,
-				RequiresRestart = false
-			}));
-			LethalConfigManager.AddConfigItem(new FloatSliderConfigItem(config.healthBarYOffset, new FloatSliderOptions
-			{
-				Min = -64f,
-				Max = 64f,
-				RequiresRestart = false
-			}));
-			LethalConfigManager.AddConfigItem(new FloatSliderConfigItem(config.infectionBarYOffset, new FloatSliderOptions
-			{
-				Min = -64f,
-				Max = 64f,
-				RequiresRestart = false
-			}));
-			LethalConfigManager.AddConfigItem(new FloatSliderConfigItem(config.uiScale, new FloatSliderOptions
-			{
-				Min = 0.003f,
-				Max = 0.05f,
-				RequiresRestart = false
-			}));
-			LethalConfigManager.AddConfigItem(new BoolCheckBoxConfigItem(config.showHealthText, new BoolCheckBoxOptions
-			{
-				RequiresRestart = false
-			}));
-			LethalConfigManager.AddConfigItem(new BoolCheckBoxConfigItem(config.showInfectionText, new BoolCheckBoxOptions
-			{
-				RequiresRestart = false
-			}));
-			LethalConfigManager.AddConfigItem(new EnumDropDownConfigItem<ColorPreset>(config.healthColor, false));
-			LethalConfigManager.AddConfigItem(new EnumDropDownConfigItem<ColorPreset>(config.infectionColor, false));
-			LethalConfigManager.AddConfigItem(new EnumDropDownConfigItem<ColorPreset>(config.backgroundColor, false));
-			LethalConfigManager.AddConfigItem(new EnumDropDownConfigItem<InfectionBarDisplayMode>(config.infectionDisplayMode, false));
-			LethalConfigManager.AddConfigItem(new GenericButtonConfigItem("General", "Refresh all player bars", "Forces all visible player bars to refresh on the next update.", "Refresh", () =>
+			AddBool(config.enabled);
+			AddBool(config.hideInOrbit);
+			AddFloat(config.maxDistance, 2f, 80f);
+			AddFloat(config.headOffset, 0f, 2f);
+			AddFloat(config.barSpacing, 6f, 48f);
+			AddFloat(config.healthBarYOffset, -64f, 64f);
+			AddFloat(config.infectionBarYOffset, -64f, 64f);
+			AddFloat(config.uiScale, 0.003f, 0.05f);
+			AddBool(config.showHealthText);
+			AddBool(config.showInfectionText);
+			AddEnum(config.healthColor);
+			AddEnum(config.infectionColor);
+			AddEnum(config.backgroundColor);
+			AddEnum(config.infectionDisplayMode);
+			AddConfigItem(CreateItem("LethalConfig.ConfigItems.GenericButtonConfigItem", "General", "Refresh all player bars", "Forces all visible player bars to refresh on the next update.", "Refresh", (Action)(() =>
 			{
 				config.NotifySettingsChanged();
-			}));
+			})));
+		}
+
+		private static void AddBool(ConfigEntry<bool> entry)
+		{
+			AddConfigItem(CreateItem("LethalConfig.ConfigItems.BoolCheckBoxConfigItem", entry, CreateOptions("LethalConfig.ConfigItems.Options.BoolCheckBoxOptions",
+				("RequiresRestart", false))));
+		}
+
+		private static void AddFloat(ConfigEntry<float> entry, float min, float max)
+		{
+			AddConfigItem(CreateItem("LethalConfig.ConfigItems.FloatSliderConfigItem", entry, CreateOptions("LethalConfig.ConfigItems.Options.FloatSliderOptions",
+				("Min", min),
+				("Max", max),
+				("RequiresRestart", false))));
+		}
+
+		private static void AddEnum<T>(ConfigEntry<T> entry)
+		{
+			Type itemType = RequireType("LethalConfig.ConfigItems.EnumDropDownConfigItem`1").MakeGenericType(typeof(T));
+			AddConfigItem(CreateItem(itemType, entry, false));
+		}
+
+		private static object CreateOptions(string typeName, params (string Name, object Value)[] values)
+		{
+			object options = Activator.CreateInstance(RequireType(typeName)) ?? throw new InvalidOperationException($"Failed to create {typeName}.");
+			Type optionsType = options.GetType();
+			foreach ((string name, object value) in values)
+			{
+				PropertyInfo? property = optionsType.GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
+				if (property == null || !property.CanWrite)
+				{
+					throw new MissingMemberException(optionsType.FullName, name);
+				}
+
+				property.SetValue(options, value);
+			}
+
+			return options;
+		}
+
+		private static object CreateItem(string typeName, params object[] args)
+		{
+			return CreateItem(RequireType(typeName), args);
+		}
+
+		private static object CreateItem(Type type, params object[] args)
+		{
+			return Activator.CreateInstance(type, args) ?? throw new InvalidOperationException($"Failed to create {type.FullName}.");
+		}
+
+		private static void AddConfigItem(object configItem)
+		{
+			Type managerType = RequireType("LethalConfig.LethalConfigManager");
+			foreach (MethodInfo method in managerType.GetMethods(BindingFlags.Public | BindingFlags.Static))
+			{
+				ParameterInfo[] parameters = method.GetParameters();
+				if (method.Name == "AddConfigItem"
+					&& parameters.Length == 2
+					&& parameters[0].ParameterType.IsInstanceOfType(configItem)
+					&& parameters[1].ParameterType == typeof(Assembly))
+				{
+					method.Invoke(null, new object[] { configItem, Assembly.GetExecutingAssembly() });
+					return;
+				}
+			}
+
+			foreach (MethodInfo method in managerType.GetMethods(BindingFlags.Public | BindingFlags.Static))
+			{
+				ParameterInfo[] parameters = method.GetParameters();
+				if (method.Name == "AddConfigItem" && parameters.Length == 1 && parameters[0].ParameterType.IsInstanceOfType(configItem))
+				{
+					method.Invoke(null, new[] { configItem });
+					return;
+				}
+			}
+
+			throw new MissingMethodException(managerType.FullName, "AddConfigItem");
+		}
+
+		private static Type RequireType(string typeName)
+		{
+			return Type.GetType($"{typeName}, LethalConfig", false)
+				?? throw new TypeLoadException($"Could not find optional LethalConfig type '{typeName}'.");
 		}
 	}
 

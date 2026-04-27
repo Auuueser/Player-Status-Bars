@@ -8,7 +8,7 @@ Player Status Bars is a client-side BepInEx mod for Lethal Company. It displays 
 - Excludes the local player.
 - Uses a world-space UI that follows the player and faces the local camera.
 - Reads infection values from `CadaverGrowthAI.playerInfections[playerId].infectionMeter` when Cadaver Growth is present.
-- Supports BepInEx configuration and LethalConfig runtime adjustment.
+- Supports BepInEx configuration and optional LethalConfig runtime adjustment.
 - Includes distance-based visibility, orbit-phase hiding, infection bar display modes, and configurable layout offsets.
 - Shows a critical health state for players reported as critically injured, bleeding heavily, or persistently below the low-health threshold.
 - Uses a short stabilization window to reduce stale critical-state display for players joining mid-session through late-join mods.
@@ -18,7 +18,7 @@ Player Status Bars is a client-side BepInEx mod for Lethal Company. It displays 
 
 - Lethal Company
 - BepInEx 5
-- LethalConfig
+- LethalConfig is optional.
 - Cadaver Growth is optional. If it is not present, health bars continue to work and infection values are safely unavailable.
 
 ## Installation
@@ -26,7 +26,7 @@ Player Status Bars is a client-side BepInEx mod for Lethal Company. It displays 
 1. Build or download `PlayerStatusBars.dll`.
 2. Place the DLL in the target profile's `BepInEx/plugins` folder.
 3. Start the game once to generate the BepInEx configuration file.
-4. Adjust settings through the generated config file or LethalConfig.
+4. Adjust settings through the generated config file, or through LethalConfig when it is installed.
 
 ## Build
 
@@ -37,8 +37,7 @@ Example:
 ```powershell
 dotnet build PlayerStatusBars.csproj -c Release `
   -p:LethalCompanyDir="D:\Steam\steamapps\common\Lethal Company" `
-  -p:BepInExDir="D:\path\to\profile\BepInEx" `
-  -p:LethalConfigDir="D:\path\to\profile\BepInEx\plugins\AinaVT-LethalConfig\LethalConfig"
+  -p:BepInExDir="D:\path\to\profile\BepInEx"
 ```
 
 The compiled DLL is emitted under the configured build output directory.
@@ -55,7 +54,7 @@ The mod exposes settings for:
 - Health, infection, and background color presets.
 - Infection bar display mode: always visible or only visible when infected.
 
-Most options are applied at runtime through LethalConfig.
+Most options apply at runtime. If LethalConfig is installed, Player Status Bars registers matching in-game controls through an optional reflection-based integration. If LethalConfig is not installed, all settings remain available through the generated BepInEx configuration file.
 
 ## Known limitations
 
@@ -65,4 +64,10 @@ This is a pure client-side mod. It can only display data that the local client c
 
 Player Status Bars is released under the MIT License. See `LICENSE` for the full license text.
 
-LethalConfig is an independent third-party dependency used to expose runtime configuration controls. The LethalConfig project is published under GPL-3.0; see the LethalConfig project and package pages for its license terms.
+## Third-party notices
+
+Player Status Bars does not bundle, redistribute, or require LethalConfig, MoreCompany, or LTC Lobby Control.
+
+- LethalConfig is an independent GPL-3.0 project. When installed by the user, Player Status Bars can integrate with it at runtime through reflection; this project does not compile against or include LethalConfig code.
+- MoreCompany is an independent MIT-licensed project. Its player-slot expansion behavior was reviewed for compatibility hardening; this project does not include MoreCompany code.
+- LTC Lobby Control is an independent MIT-licensed project. Its late-join behavior was reviewed for compatibility hardening; this project does not include LTC Lobby Control code.

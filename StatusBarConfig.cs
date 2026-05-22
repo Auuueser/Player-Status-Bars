@@ -47,6 +47,8 @@ internal sealed class StatusBarConfig
 
 	public bool ShowInfectionText => showInfectionText.Value;
 
+	public bool DebugLogging => debugLogging.Value;
+
 	public InfectionBarDisplayMode InfectionDisplayMode => infectionDisplayMode.Value;
 
 	public int Revision { get; private set; }
@@ -74,6 +76,7 @@ internal sealed class StatusBarConfig
 		infectionColor = configFile.Bind("Colors", "Infection Bar Color", ColorPreset.Orange, "Fill color preset for the infection bar.");
 		backgroundColor = configFile.Bind("Colors", "Background Color", ColorPreset.Slate, "Background color preset for both bars.");
 		infectionDisplayMode = configFile.Bind("General", "Infection Bar Display Mode", InfectionBarDisplayMode.ShowOnlyWhenInfected, "Always show the infection bar, or only show it when infection is above zero.");
+		debugLogging = configFile.Bind("Debug", "Debug Logging", false, "Write throttled diagnostic logs for player status bar creation, filtering, visibility, and camera state.");
 
 		Subscribe(enabled);
 		Subscribe(hideInOrbit);
@@ -89,6 +92,7 @@ internal sealed class StatusBarConfig
 		Subscribe(infectionColor);
 		Subscribe(backgroundColor);
 		Subscribe(infectionDisplayMode);
+		Subscribe(debugLogging);
 	}
 
 	public Color GetHealthFillColor()
@@ -161,6 +165,7 @@ internal sealed class StatusBarConfig
 			AddEnum(config.infectionColor);
 			AddEnum(config.backgroundColor);
 			AddEnum(config.infectionDisplayMode);
+			AddBool(config.debugLogging);
 		}
 
 		private static void AddBool(ConfigEntry<bool> entry)
@@ -274,4 +279,6 @@ internal sealed class StatusBarConfig
 	private readonly ConfigEntry<ColorPreset> backgroundColor;
 
 	private readonly ConfigEntry<InfectionBarDisplayMode> infectionDisplayMode;
+
+	private readonly ConfigEntry<bool> debugLogging;
 }

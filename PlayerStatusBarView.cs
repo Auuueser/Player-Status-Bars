@@ -54,6 +54,12 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 
 	private bool lastCanvasEnabled = true;
 
+	private Camera? lastAppliedCanvasCamera;
+
+	private string lastDebugVisibilityState = string.Empty;
+
+	private float nextDebugVisibilityLogTime;
+
 	private float lastAppliedUiScale = -1f;
 
 	private float lastAppliedHealthBarYOffset = float.NaN;
@@ -80,6 +86,7 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 		gameObject.AddComponent<StatusBarBillboard>();
 		worldCanvas = gameObject.AddComponent<Canvas>();
 		worldCanvas.renderMode = RenderMode.WorldSpace;
+		worldCanvas.overrideSorting = true;
 		worldCanvas.sortingOrder = 50;
 		gameObject.AddComponent<CanvasScaler>();
 		canvasRect = worldCanvas.GetComponent<RectTransform>();
@@ -126,6 +133,8 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 		localPlayer = GameNetworkManager.Instance != null
 			? GameNetworkManager.Instance.localPlayerController
 			: StartOfRound.Instance?.localPlayerController;
+		Camera? viewCamera = StatusBarBillboard.ResolveViewCamera();
+		ApplyCanvasCamera(viewCamera);
 		bool canShowGroup = ShouldShowGroup();
 
 		anchor ??= ResolveAnchor(targetPlayer);
@@ -134,8 +143,10 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 		transform.position = anchorPosition + Vector3.up * (Plugin.Settings.HeadOffset + stripSpacing * Plugin.Settings.UiScale);
 		ApplyCanvasScale(Plugin.Settings.UiScale);
 		SetCanvasEnabled(canShowGroup);
-		if (!canShowGroup || !IsTargetReadyForDisplay())
+		bool targetReady = IsTargetReadyForDisplay();
+		if (!canShowGroup || !targetReady)
 		{
+			LogDebugVisibility(!canShowGroup ? "group-hidden" : "target-not-ready", viewCamera, -1f);
 			healthStrip.SetVisible(false);
 			infectionStrip.SetVisible(false);
 			wasHealthVisible = false;
@@ -144,7 +155,7 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 			ResetInitialStateStabilization();
 			return;
 		}
-		bool isWithinDisplayDistance = ShouldShowForDistance();
+		bool isWithinDisplayDistance = ShouldShowForDistance(viewCamera, out float displayDistance);
 		ApplyStripLayoutOffsets();
 
 		int rawHealth = Mathf.Clamp(targetPlayer.health, 0, 100);
@@ -198,6 +209,7 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 		}
 
 		bool showHealth = isWithinDisplayDistance;
+		LogDebugVisibility(showHealth ? "visible" : "distance-hidden", viewCamera, displayDistance);
 		bool showCriticalHealthBar = isInCriticalState || showLowHealthFallback;
 		string healthLabel = showCriticalHealthBar ? GetCriticalHealthLabel() : "HP";
 		healthStrip.SetFillColorOverride(showCriticalHealthBar, CriticalHealthBarColor);
@@ -351,6 +363,17 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 		lastCanvasEnabled = enabled;
 	}
 
+	private void ApplyCanvasCamera(Camera? viewCamera)
+	{
+		if (lastAppliedCanvasCamera == viewCamera && worldCanvas.worldCamera == viewCamera)
+		{
+			return;
+		}
+
+		worldCanvas.worldCamera = viewCamera;
+		lastAppliedCanvasCamera = viewCamera;
+	}
+
 	private bool TryCreateStrip(string stripName, out PlayerStatusBarStrip strip)
 	{
 		strip = null!;
@@ -365,16 +388,18 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 		return true;
 	}
 
-	private bool ShouldShowForDistance()
+	private bool ShouldShowForDistance(Camera? viewCamera, out float distance)
 	{
 		float maxDistance = Plugin.Settings.MaxDistance;
 		float maxDistanceSqr = maxDistance * maxDistance;
-		return (ResolveObserverPosition() - targetPlayer.transform.position).sqrMagnitude <= maxDistanceSqr;
+		Vector3 offset = ResolveObserverPosition(viewCamera) - targetPlayer.transform.position;
+		float distanceSqr = offset.sqrMagnitude;
+		distance = Mathf.Sqrt(distanceSqr);
+		return distanceSqr <= maxDistanceSqr;
 	}
 
-	private Vector3 ResolveObserverPosition()
+	private Vector3 ResolveObserverPosition(Camera? viewCamera)
 	{
-		Camera? viewCamera = StatusBarBillboard.ResolveViewCamera();
 		if (viewCamera != null)
 		{
 			return viewCamera.transform.position;
@@ -405,7 +430,7 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 			return true;
 		}
 
-		return !startOfRound.shipIsLeaving && (!startOfRound.inShipPhase || startOfRound.shipHasLanded);
+		return !PlayerStatusBarManager.ShouldSkipBarsForShipState(startOfRound);
 	}
 
 	private static Transform? ResolveAnchor(PlayerControllerB player)
@@ -421,5 +446,28 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 		}
 
 		return player.transform;
+	}
+
+	private void LogDebugVisibility(string state, Camera? viewCamera, float distance)
+	{
+		if (!Plugin.Settings.DebugLogging)
+		{
+			return;
+		}
+
+		if (state == lastDebugVisibilityState && Time.unscaledTime < nextDebugVisibilityLogTime)
+		{
+			return;
+		}
+
+		lastDebugVisibilityState = state;
+		nextDebugVisibilityLogTime = Time.unscaledTime + 5f;
+		string distanceText = distance >= 0f ? $"{distance:0.0}/{Plugin.Settings.MaxDistance:0.0}" : "n/a";
+		Plugin.LogDebug($"View playerId={PlayerId} name='{targetPlayer.playerUsername}' state={state} health={targetPlayer.health} controlled={targetPlayer.isPlayerControlled} dead={targetPlayer.isPlayerDead} distance={distanceText} canvasEnabled={worldCanvas.enabled} camera='{(viewCamera != null ? viewCamera.name : "none")}' anchor='{(anchor != null ? anchor.name : "none")}' position={FormatVector(transform.position)} target={FormatVector(targetPlayer.transform.position)}.");
+	}
+
+	private static string FormatVector(Vector3 value)
+	{
+		return $"({value.x:0.0},{value.y:0.0},{value.z:0.0})";
 	}
 }

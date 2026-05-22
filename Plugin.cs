@@ -25,6 +25,15 @@ public sealed class Plugin : BaseUnityPlugin
 		gameObject.AddComponent<PlayerStatusBarManager>();
 		Config.Save();
 		Log.LogInfo("OtherPlayerStatusBars loaded.");
+		LogDebug("Debug logging is enabled.");
+	}
+
+	internal static void LogDebug(string message)
+	{
+		if (Settings?.DebugLogging == true)
+		{
+			Log.LogInfo($"[Debug] {message}");
+		}
 	}
 
 	private static bool DetectChineseLocalizationMod()

@@ -13,7 +13,9 @@ Player Status Bars is a client-side BepInEx mod for Lethal Company. It displays 
 - Shows a critical health state for players reported as critically injured, bleeding heavily, or persistently below the low-health threshold.
 - Uses a short stabilization window to reduce stale critical or low-health display for players joining mid-session through late-join mods.
 - Uses the active gameplay, spectator, or freecam view as the distance reference when deciding whether bars are visible.
+- Uses additional round-state signals to keep bars visible for clients joining after a round has already started.
 - Hides bars during the ship takeoff transition to avoid displaying transient player states.
+- Provides optional debug logging for diagnosing player filtering, visibility, and camera state.
 - Uses Chinese critical text when a Chinese localization or translation plugin is detected; otherwise it uses English text.
 
 ## Requirements
@@ -55,6 +57,7 @@ The mod exposes settings for:
 - Health and infection bar text visibility.
 - Health, infection, and background color presets.
 - Infection bar display mode: always visible or only visible when infected.
+- Debug logging for status bar creation, filtering, visibility, and camera diagnostics.
 
 Most options apply at runtime. If LethalConfig is installed, Player Status Bars registers matching in-game controls through an optional reflection-based integration. If LethalConfig is not installed, all settings remain available through the generated BepInEx configuration file.
 

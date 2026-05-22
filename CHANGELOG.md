@@ -7,10 +7,12 @@ All notable changes to this project are documented here.
 - Improved late-join handling for reused player slots so newly joined players no longer inherit stale critical or low-health bar states.
 - Improved compatibility with late-join and extended-lobby player slots where the player slot index can differ from the reported player client id.
 - Improved spectator and freecam distance handling so player status bars remain visible when the active view is near the target.
+- Improved ship-state detection so status bars are not hidden when a client joins after the round has already started.
 - Prevented recovered critical-health players from remaining displayed as 20 HP when remote clients only receive the recovery flag update.
 - Hid player status bars during the ship takeoff transition to avoid showing temporary player state while the round is closing.
 - Removed an optional LethalConfig refresh button that caused a startup warning on LethalConfig versions without the matching button constructor.
 - Reduced optional Cadaver Growth lookup overhead by caching integration metadata and instance discovery across player bars.
+- Added optional debug logging for status bar creation, filtering, visibility, and camera diagnostics.
 
 ## 0.1.1
 

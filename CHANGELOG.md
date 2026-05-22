@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here.
 
+## 0.1.3
+
+- Improved spectator and freecam distance handling so player status bars remain visible when the active view is near the target.
+- Improved compatibility with late-join and extended-lobby player slots where the player slot index can differ from the reported player client id.
+- Removed an optional LethalConfig refresh button that caused a startup warning on LethalConfig versions without the matching button constructor.
+
 ## 0.1.2
 
 - Improved late-join handling for reused player slots so newly joined players no longer inherit stale critical or low-health bar states.

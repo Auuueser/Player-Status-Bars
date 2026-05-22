@@ -8,15 +8,23 @@ namespace OtherPlayerStatusBars;
 
 internal sealed class CadaverGrowthInfectionProvider
 {
-	private Type? cadaverGrowthType;
+	private const float MetadataRetryDelay = 5f;
 
-	private FieldInfo? playerInfectionsField;
+	private const float InstanceRetryDelay = 1f;
 
-	private FieldInfo? infectionMeterField;
+	private static Type? cadaverGrowthType;
 
-	private UnityEngine.Object? cachedCadaverGrowthInstance;
+	private static FieldInfo? playerInfectionsField;
 
-	private float nextFindTime;
+	private static FieldInfo? infectionMeterField;
+
+	private static UnityEngine.Object? cachedCadaverGrowthInstance;
+
+	private static bool metadataResolved;
+
+	private static float nextMetadataResolveTime;
+
+	private static float nextFindTime;
 
 	public bool TryGetNormalizedInfection(PlayerControllerB player, out float infectionMeter)
 	{
@@ -69,7 +77,7 @@ internal sealed class CadaverGrowthInfectionProvider
 
 		if (cachedCadaverGrowthInstance == null && Time.unscaledTime >= nextFindTime)
 		{
-			nextFindTime = Time.unscaledTime + 1f;
+			nextFindTime = Time.unscaledTime + InstanceRetryDelay;
 			cachedCadaverGrowthInstance = UnityEngine.Object.FindObjectOfType(cadaverGrowthType!);
 		}
 
@@ -84,11 +92,17 @@ internal sealed class CadaverGrowthInfectionProvider
 
 	private bool TryResolveCadaverGrowthMetadata()
 	{
-		if (cadaverGrowthType != null && playerInfectionsField != null && infectionMeterField != null)
+		if (metadataResolved)
 		{
 			return true;
 		}
 
+		if (Time.unscaledTime < nextMetadataResolveTime)
+		{
+			return false;
+		}
+
+		nextMetadataResolveTime = Time.unscaledTime + MetadataRetryDelay;
 		cadaverGrowthType = AppDomain.CurrentDomain.GetAssemblies()
 			.Select(assembly => assembly.GetType("CadaverGrowthAI", throwOnError: false))
 			.FirstOrDefault(type => type != null);
@@ -116,6 +130,7 @@ internal sealed class CadaverGrowthInfectionProvider
 		}
 
 		infectionMeterField = playerInfectionType.GetField("infectionMeter", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-		return infectionMeterField != null;
+		metadataResolved = infectionMeterField != null;
+		return metadataResolved;
 	}
 }

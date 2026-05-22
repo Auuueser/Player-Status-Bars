@@ -55,29 +55,29 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 		for (int i = 0; i < allPlayers.Length; i++)
 		{
 			PlayerControllerB player = allPlayers[i];
-			if (!ShouldTrackPlayer(player, localPlayer, allPlayers))
+			if (!ShouldTrackPlayer(player, localPlayer))
 			{
 				continue;
 			}
 
-			int playerId = (int)player.playerClientId;
-			seenPlayerIds.Add(playerId);
-			if (trackedBars.ContainsKey(playerId))
+			int playerKey = ResolvePlayerKey(player, i, allPlayers);
+			seenPlayerIds.Add(playerKey);
+			if (trackedBars.ContainsKey(playerKey))
 			{
 				continue;
 			}
 
-			GameObject viewObject = new($"OtherPlayerStatusBar_{playerId}");
+			GameObject viewObject = new($"OtherPlayerStatusBar_{playerKey}");
 			viewObject.transform.SetParent(transform, worldPositionStays: false);
 			PlayerStatusBarView view = viewObject.AddComponent<PlayerStatusBarView>();
 			if (!view.Initialize(player))
 			{
 				Destroy(viewObject);
-				Plugin.Log.LogWarning($"Failed to create player status bar for playerId={playerId}.");
+				Plugin.Log.LogWarning($"Failed to create player status bar for playerKey={playerKey}.");
 				continue;
 			}
 
-			trackedBars[playerId] = view;
+			trackedBars[playerKey] = view;
 		}
 
 		staleIds.Clear();
@@ -95,7 +95,7 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 		}
 	}
 
-	private static bool ShouldTrackPlayer(PlayerControllerB player, PlayerControllerB localPlayer, PlayerControllerB[] allPlayers)
+	private static bool ShouldTrackPlayer(PlayerControllerB player, PlayerControllerB localPlayer)
 	{
 		if (player == null || localPlayer == null)
 		{
@@ -117,13 +117,18 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 			return false;
 		}
 
+		return player.gameObject.activeInHierarchy;
+	}
+
+	private static int ResolvePlayerKey(PlayerControllerB player, int slotIndex, PlayerControllerB[] allPlayers)
+	{
 		int playerId = (int)player.playerClientId;
-		if (playerId < 0 || playerId >= allPlayers.Length || allPlayers[playerId] != player)
+		if (playerId >= 0 && playerId < allPlayers.Length && allPlayers[playerId] == player)
 		{
-			return false;
+			return playerId;
 		}
 
-		return player.gameObject.activeInHierarchy;
+		return slotIndex;
 	}
 
 	private static bool ShouldSkipBarsInOrbit(StartOfRound startOfRound)

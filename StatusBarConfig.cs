@@ -161,10 +161,6 @@ internal sealed class StatusBarConfig
 			AddEnum(config.infectionColor);
 			AddEnum(config.backgroundColor);
 			AddEnum(config.infectionDisplayMode);
-			AddConfigItem(CreateItem("LethalConfig.ConfigItems.GenericButtonConfigItem", "General", "Refresh all player bars", "Forces all visible player bars to refresh on the next update.", "Refresh", (Action)(() =>
-			{
-				config.NotifySettingsChanged();
-			})));
 		}
 
 		private static void AddBool(ConfigEntry<bool> entry)

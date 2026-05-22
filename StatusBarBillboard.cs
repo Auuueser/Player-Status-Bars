@@ -5,6 +5,10 @@ namespace OtherPlayerStatusBars;
 
 internal sealed class StatusBarBillboard : MonoBehaviour
 {
+	private static int cachedCameraFrame = -1;
+
+	private static Camera? cachedCamera;
+
 	private void LateUpdate()
 	{
 		Camera? viewCamera = ResolveViewCamera();
@@ -23,20 +27,40 @@ internal sealed class StatusBarBillboard : MonoBehaviour
 		transform.rotation = Quaternion.LookRotation(cameraForward, cameraUp);
 	}
 
-	private static Camera? ResolveViewCamera()
+	internal static Camera? ResolveViewCamera()
+	{
+		if (cachedCameraFrame == Time.frameCount)
+		{
+			return cachedCamera;
+		}
+
+		cachedCameraFrame = Time.frameCount;
+		cachedCamera = ResolveViewCameraUncached();
+		return cachedCamera;
+	}
+
+	private static Camera? ResolveViewCameraUncached()
 	{
 		StartOfRound? startOfRound = StartOfRound.Instance;
-		if (startOfRound == null)
+		if (startOfRound != null)
 		{
-			return Camera.current;
+			if (startOfRound.activeCamera != null && startOfRound.activeCamera.enabled)
+			{
+				return startOfRound.activeCamera;
+			}
+
+			PlayerControllerB? localPlayer = startOfRound.localPlayerController;
+			if (localPlayer != null && !localPlayer.isPlayerDead && localPlayer.gameplayCamera != null && localPlayer.gameplayCamera.enabled)
+			{
+				return localPlayer.gameplayCamera;
+			}
+
+			if (startOfRound.spectateCamera != null && startOfRound.spectateCamera.enabled)
+			{
+				return startOfRound.spectateCamera;
+			}
 		}
 
-		PlayerControllerB? localPlayer = startOfRound.localPlayerController;
-		if (localPlayer != null && !localPlayer.isPlayerDead)
-		{
-			return localPlayer.gameplayCamera;
-		}
-
-		return startOfRound.spectateCamera != null ? startOfRound.spectateCamera : Camera.current;
+		return Camera.main != null ? Camera.main : Camera.current;
 	}
 }

@@ -367,14 +367,29 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 
 	private bool ShouldShowForDistance()
 	{
-		if (localPlayer == null)
-		{
-			return true;
-		}
-
 		float maxDistance = Plugin.Settings.MaxDistance;
 		float maxDistanceSqr = maxDistance * maxDistance;
-		return (localPlayer.transform.position - targetPlayer.transform.position).sqrMagnitude <= maxDistanceSqr;
+		return (ResolveObserverPosition() - targetPlayer.transform.position).sqrMagnitude <= maxDistanceSqr;
+	}
+
+	private Vector3 ResolveObserverPosition()
+	{
+		Camera? viewCamera = StatusBarBillboard.ResolveViewCamera();
+		if (viewCamera != null)
+		{
+			return viewCamera.transform.position;
+		}
+
+		if (localPlayer != null)
+		{
+			PlayerControllerB? spectatedPlayer = localPlayer.spectatedPlayerScript;
+			if (localPlayer.isPlayerDead && spectatedPlayer != null && !spectatedPlayer.isPlayerDead)
+			{
+				return spectatedPlayer.transform.position;
+			}
+		}
+
+		return localPlayer != null ? localPlayer.transform.position : targetPlayer.transform.position;
 	}
 
 	private bool ShouldShowGroup()

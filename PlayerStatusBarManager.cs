@@ -18,6 +18,11 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 
 	private float nextDebugSummaryTime;
 
+	private void Start()
+	{
+		Plugin.LogDebug($"Runtime manager started active={gameObject.activeInHierarchy}.");
+	}
+
 	private void Update()
 	{
 		if (!Plugin.Settings.Enabled)
@@ -229,16 +234,19 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 
 	private void OnDestroy()
 	{
+		Plugin.LogDebug($"Runtime manager destroyed tracked={trackedBars.Count}.");
 		ClearBars();
 	}
 
 	private void OnEnable()
 	{
+		Plugin.LogDebug("Runtime manager enabled.");
 		Plugin.Settings.SettingsChanged += HandleSettingsChanged;
 	}
 
 	private void OnDisable()
 	{
+		Plugin.LogDebug($"Runtime manager disabled tracked={trackedBars.Count}.");
 		Plugin.Settings.SettingsChanged -= HandleSettingsChanged;
 	}
 

@@ -10,6 +10,12 @@ namespace OtherPlayerStatusBars;
 [BepInPlugin(MyPluginInfo.PluginGuid, MyPluginInfo.PluginName, MyPluginInfo.PluginVersion)]
 public sealed class Plugin : BaseUnityPlugin
 {
+	private const string RuntimeObjectName = "OtherPlayerStatusBars.Runtime";
+
+	private static GameObject? runtimeObject;
+
+	private static PlayerStatusBarManager? runtimeManager;
+
 	internal static ManualLogSource Log { get; private set; } = null!;
 
 	internal static StatusBarConfig Settings { get; private set; } = null!;
@@ -22,10 +28,15 @@ public sealed class Plugin : BaseUnityPlugin
 		Settings = StatusBarConfig.Create(Config);
 		UseChineseCriticalLabel = DetectChineseLocalizationMod();
 		TryRegisterLethalConfig();
-		gameObject.AddComponent<PlayerStatusBarManager>();
+		EnsureRuntimeManager();
 		Config.Save();
 		Log.LogInfo("OtherPlayerStatusBars loaded.");
 		LogDebug("Debug logging is enabled.");
+	}
+
+	private void OnDestroy()
+	{
+		LogDebug("Plugin component destroyed; runtime manager remains active.");
 	}
 
 	internal static void LogDebug(string message)
@@ -34,6 +45,40 @@ public sealed class Plugin : BaseUnityPlugin
 		{
 			Log.LogInfo($"[Debug] {message}");
 		}
+	}
+
+	private static void EnsureRuntimeManager()
+	{
+		if (runtimeManager != null)
+		{
+			GameObject existingObject = runtimeManager.gameObject;
+			if (existingObject != null && !existingObject.activeSelf)
+			{
+				existingObject.SetActive(true);
+			}
+
+			LogDebug("Runtime manager already active.");
+			return;
+		}
+
+		if (runtimeObject == null)
+		{
+			runtimeObject = new GameObject(RuntimeObjectName);
+			runtimeObject.hideFlags = HideFlags.HideAndDontSave;
+			DontDestroyOnLoad(runtimeObject);
+		}
+		else if (!runtimeObject.activeSelf)
+		{
+			runtimeObject.SetActive(true);
+		}
+
+		runtimeManager = runtimeObject.GetComponent<PlayerStatusBarManager>();
+		if (runtimeManager == null)
+		{
+			runtimeManager = runtimeObject.AddComponent<PlayerStatusBarManager>();
+		}
+
+		LogDebug("Runtime manager created.");
 	}
 
 	private static bool DetectChineseLocalizationMod()

@@ -14,6 +14,7 @@ Player Status Bars is a client-side BepInEx mod for Lethal Company. It displays 
 - Uses a short stabilization window to reduce stale critical or low-health display for players joining mid-session through late-join mods.
 - Uses the active gameplay, spectator, or freecam view as the distance reference when deciding whether bars are visible.
 - Uses additional round-state signals to keep bars visible for clients joining after a round has already started.
+- Runs status bar management from a persistent runtime host so bar refresh continues across scene transitions.
 - Hides bars during the ship takeoff transition to avoid displaying transient player states.
 - Provides optional debug logging for diagnosing player filtering, visibility, and camera state.
 - Uses Chinese critical text when a Chinese localization or translation plugin is detected; otherwise it uses English text.

@@ -8,6 +8,7 @@ All notable changes to this project are documented here.
 - Improved compatibility with late-join and extended-lobby player slots where the player slot index can differ from the reported player client id.
 - Improved spectator and freecam distance handling so player status bars remain visible when the active view is near the target.
 - Improved ship-state detection so status bars are not hidden when a client joins after the round has already started.
+- Kept status bar management on a persistent runtime host so bar creation and refresh continue across scene transitions and plugin-host lifecycle changes.
 - Prevented recovered critical-health players from remaining displayed as 20 HP when remote clients only receive the recovery flag update.
 - Hid player status bars during the ship takeoff transition to avoid showing temporary player state while the round is closing.
 - Removed an optional LethalConfig refresh button that caused a startup warning on LethalConfig versions without the matching button constructor.

@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented here.
 
+## 0.1.2
+
+- Suppressed initial stale low-health states observed during late-join player-slot reuse, preventing recovered players from remaining displayed at 20 HP.
+- Cleared status bars during the ship takeoff transition to avoid creating bars from transient player state.
+- Updated GitHub and Thunderstore documentation for the late-join recovery behavior.
+
 ## 0.1.1
 
 - Hardened late-join initialization for MoreCompany and LTC Lobby Control style player-slot changes.

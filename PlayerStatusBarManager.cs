@@ -128,7 +128,8 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 
 	private static bool ShouldSkipBarsInOrbit(StartOfRound startOfRound)
 	{
-		return Plugin.Settings.HideInOrbit && startOfRound.inShipPhase && !startOfRound.shipHasLanded;
+		return Plugin.Settings.HideInOrbit
+			&& ((startOfRound.inShipPhase && !startOfRound.shipHasLanded) || startOfRound.shipIsLeaving);
 	}
 
 	private void RemoveBar(int playerId)

@@ -153,9 +153,10 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 		bool rawCriticalState = isCriticallyInjured || isBleedingHeavily;
 		UpdateInitialStateStabilization(rawCriticalState, rawHealth);
 		bool isInCriticalState = rawCriticalState && !suppressInitialStaleCriticalState;
-		int displayHealth = suppressInitialStaleHealthState && rawHealth == 20 && !isInCriticalState ? 100 : rawHealth;
+		bool isInitialStaleHealthState = suppressInitialStaleHealthState && rawHealth <= 20 && !isInCriticalState;
+		int displayHealth = isInitialStaleHealthState ? 100 : rawHealth;
 		bool showLowHealthFallback = false;
-		if (!isInCriticalState && rawHealth < 20 && !targetPlayer.isPlayerDead)
+		if (!isInitialStaleHealthState && !isInCriticalState && rawHealth < 20 && !targetPlayer.isPlayerDead)
 		{
 			if (!isLowHealthRecoveryTiming)
 			{
@@ -276,8 +277,8 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 			if (age <= InitialStateStabilizationDelay && !hasObservedStableNonCriticalState)
 			{
 				// Late-join and extended-player mods can briefly expose cloned/default player state.
-				// Keep that initial stale 20 HP / critical flag from becoming a persistent bar state.
-				if (rawHealth == 20)
+				// Keep that initial stale low-health or critical flag from becoming a persistent bar state.
+				if (rawHealth <= 20)
 				{
 					suppressInitialStaleHealthState = true;
 				}
@@ -295,7 +296,7 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 		}
 
 		if ((suppressInitialStaleCriticalState || suppressInitialStaleHealthState)
-			&& (targetPlayer.isPlayerDead || rawHealth < 20 || (!rawCriticalState && rawHealth > 20)))
+			&& (targetPlayer.isPlayerDead || (!rawCriticalState && rawHealth > 20)))
 		{
 			suppressInitialStaleCriticalState = false;
 			suppressInitialStaleHealthState = false;
@@ -389,7 +390,7 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 			return true;
 		}
 
-		return !startOfRound.inShipPhase || startOfRound.shipHasLanded;
+		return !startOfRound.shipIsLeaving && (!startOfRound.inShipPhase || startOfRound.shipHasLanded);
 	}
 
 	private static Transform? ResolveAnchor(PlayerControllerB player)

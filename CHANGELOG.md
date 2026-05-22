@@ -4,9 +4,9 @@ All notable changes to this project are documented here.
 
 ## 0.1.2
 
-- Suppressed initial stale low-health states observed during late-join player-slot reuse, preventing recovered players from remaining displayed at 20 HP.
-- Cleared status bars during the ship takeoff transition to avoid creating bars from transient player state.
-- Updated GitHub and Thunderstore documentation for the late-join recovery behavior.
+- Improved late-join handling for reused player slots so newly joined players no longer inherit stale critical or low-health bar states.
+- Prevented recovered critical-health players from remaining displayed as 20 HP when remote clients only receive the recovery flag update.
+- Hid player status bars during the ship takeoff transition to avoid showing temporary player state while the round is closing.
 
 ## 0.1.1
 

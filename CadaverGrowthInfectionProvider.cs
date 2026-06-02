@@ -1,32 +1,30 @@
 using System;
-using System.Linq;
-using System.Reflection;
 using GameNetcodeStuff;
 using UnityEngine;
 
 namespace OtherPlayerStatusBars;
 
-internal sealed class CadaverGrowthInfectionProvider
+internal static class CadaverGrowthInfectionProvider
 {
-	private const float MetadataRetryDelay = 5f;
+	private const float SampleInterval = 0.5f;
 
-	private const float InstanceRetryDelay = 1f;
+	private const float AbsentInstanceScanIntervalMin = 1f;
 
-	private static Type? cadaverGrowthType;
+	private const float AbsentInstanceScanIntervalMax = 10f;
 
-	private static FieldInfo? playerInfectionsField;
+	private const int MinimumInfectionCacheCapacity = 16;
 
-	private static FieldInfo? infectionMeterField;
+	private static readonly SharedInfectionCache sharedInfectionCache = new();
 
-	private static UnityEngine.Object? cachedCadaverGrowthInstance;
+	private static CadaverGrowthAI? cachedCadaverGrowthInstance;
 
-	private static bool metadataResolved;
+	private static float nextInstanceScanTime;
 
-	private static float nextMetadataResolveTime;
+	private static float nextSampleTime;
 
-	private static float nextFindTime;
+	private static float currentAbsentInstanceScanInterval = AbsentInstanceScanIntervalMin;
 
-	public bool TryGetNormalizedInfection(PlayerControllerB player, out float infectionMeter)
+	public static bool TryGetNormalizedInfection(PlayerControllerB player, out float infectionMeter)
 	{
 		infectionMeter = 0f;
 		if (player == null)
@@ -34,103 +32,191 @@ internal sealed class CadaverGrowthInfectionProvider
 			return false;
 		}
 
-		if (!TryResolveCadaverGrowthInstance(out object instance))
+		RefreshCache();
+		int playerId = (int)player.playerClientId;
+		return sharedInfectionCache.TryGet(playerId, out infectionMeter);
+	}
+
+	private static void RefreshCache()
+	{
+		if (Time.unscaledTime < nextSampleTime)
 		{
-			return false;
+			return;
 		}
 
-		Array? playerInfections = playerInfectionsField?.GetValue(instance) as Array;
+		nextSampleTime = Time.unscaledTime + SampleInterval;
+		CadaverGrowthAI? cadaverGrowth = ResolveCadaverGrowthInstance();
+		PlayerInfection[]? playerInfections = cadaverGrowth?.playerInfections;
 		if (playerInfections == null)
 		{
-			return false;
+			sharedInfectionCache.Clear();
+			return;
 		}
 
-		int playerId = (int)player.playerClientId;
-		if (playerId < 0 || playerId >= playerInfections.Length)
+		sharedInfectionCache.EnsureCapacity(playerInfections.Length);
+		for (int i = 0; i < playerInfections.Length; i++)
 		{
-			return false;
-		}
+			PlayerInfection infection = playerInfections[i];
+			if (infection == null)
+			{
+				sharedInfectionCache.Set(i, false, 0f);
+				continue;
+			}
 
-		object? infectionEntry = playerInfections.GetValue(playerId);
-		if (infectionEntry == null || infectionMeterField == null)
-		{
-			return false;
-		}
+			float normalizedMeter = Mathf.Clamp01(infection.infectionMeter);
+			if (!infection.infected)
+			{
+				sharedInfectionCache.Set(i, false, 0f);
+				continue;
+			}
 
-		object? rawValue = infectionMeterField.GetValue(infectionEntry);
-		if (rawValue is not float infectionValue)
-		{
-			return false;
+			sharedInfectionCache.Set(i, true, normalizedMeter);
 		}
-
-		infectionMeter = Mathf.Clamp01(infectionValue);
-		return true;
 	}
 
-	private bool TryResolveCadaverGrowthInstance(out object instance)
+	private static CadaverGrowthAI? ResolveCadaverGrowthInstance()
 	{
-		instance = null!;
-		if (!TryResolveCadaverGrowthMetadata())
+		if (cachedCadaverGrowthInstance != null)
 		{
-			return false;
+			if (IsCadaverGrowthInstanceValid(cachedCadaverGrowthInstance))
+			{
+				return cachedCadaverGrowthInstance;
+			}
+
+			ClearCachedCadaverGrowthInstance();
 		}
 
-		if (cachedCadaverGrowthInstance == null && Time.unscaledTime >= nextFindTime)
+		if (Time.unscaledTime < nextInstanceScanTime)
 		{
-			nextFindTime = Time.unscaledTime + InstanceRetryDelay;
-			cachedCadaverGrowthInstance = UnityEngine.Object.FindObjectOfType(cadaverGrowthType!);
+			return null;
 		}
 
-		if (cachedCadaverGrowthInstance == null)
+		nextInstanceScanTime = Time.unscaledTime + currentAbsentInstanceScanInterval;
+		if (RoundManager.Instance == null)
 		{
-			return false;
+			IncreaseAbsentInstanceScanBackoff();
+			return null;
 		}
 
-		instance = cachedCadaverGrowthInstance;
-		return true;
+		for (int i = 0; i < RoundManager.Instance.SpawnedEnemies.Count; i++)
+		{
+			if (RoundManager.Instance.SpawnedEnemies[i] is CadaverGrowthAI cadaverGrowth)
+			{
+				cachedCadaverGrowthInstance = cadaverGrowth;
+				ResetAbsentInstanceScanBackoff();
+				return cachedCadaverGrowthInstance;
+			}
+		}
+
+		IncreaseAbsentInstanceScanBackoff();
+		return null;
 	}
 
-	private bool TryResolveCadaverGrowthMetadata()
+	private static bool IsCadaverGrowthInstanceValid(CadaverGrowthAI? cadaverGrowth)
 	{
-		if (metadataResolved)
+		if (cadaverGrowth == null || cadaverGrowth.isEnemyDead || !cadaverGrowth.gameObject.activeInHierarchy)
 		{
+			return false;
+		}
+
+		if (StartOfRound.Instance == null || cadaverGrowth.playerInfections == null)
+		{
+			return false;
+		}
+
+		bool hasCurrentPlayerInfections = cadaverGrowth.playerInfections.Length == StartOfRound.Instance.allPlayerScripts.Length;
+		if (!hasCurrentPlayerInfections)
+		{
+			return false;
+		}
+
+		if (RoundManager.Instance == null)
+		{
+			return false;
+		}
+
+		for (int i = 0; i < RoundManager.Instance.SpawnedEnemies.Count; i++)
+		{
+			if (RoundManager.Instance.SpawnedEnemies[i] == cadaverGrowth)
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private static void ClearCachedCadaverGrowthInstance()
+	{
+		cachedCadaverGrowthInstance = null;
+		sharedInfectionCache.Clear();
+	}
+
+	private static void IncreaseAbsentInstanceScanBackoff()
+	{
+		currentAbsentInstanceScanInterval = Mathf.Min(currentAbsentInstanceScanInterval * 2f, AbsentInstanceScanIntervalMax);
+	}
+
+	private static void ResetAbsentInstanceScanBackoff()
+	{
+		currentAbsentInstanceScanInterval = AbsentInstanceScanIntervalMin;
+	}
+
+	private sealed class SharedInfectionCache
+	{
+		private bool[] hasValues = Array.Empty<bool>();
+
+		private float[] meters = Array.Empty<float>();
+
+		private int validLength;
+
+		public void EnsureCapacity(int length)
+		{
+			validLength = length;
+			if (hasValues.Length >= length)
+			{
+				return;
+			}
+
+			int capacity = GrowCapacity(length);
+			hasValues = new bool[capacity];
+			meters = new float[capacity];
+		}
+
+		public void Clear()
+		{
+			Array.Clear(hasValues, 0, validLength);
+			Array.Clear(meters, 0, validLength);
+			validLength = 0;
+		}
+
+		public void Set(int index, bool hasValue, float meter)
+		{
+			hasValues[index] = hasValue;
+			meters[index] = meter;
+		}
+
+		public bool TryGet(int index, out float meter)
+		{
+			meter = 0f;
+			if (index < 0 || index >= validLength || !hasValues[index])
+			{
+				return false;
+			}
+
+			meter = meters[index];
 			return true;
 		}
 
-		if (Time.unscaledTime < nextMetadataResolveTime)
+		private static int GrowCapacity(int requiredCapacity)
 		{
-			return false;
-		}
+			int capacity = MinimumInfectionCacheCapacity;
+			while (capacity < requiredCapacity)
+			{
+				capacity *= 2;
+			}
 
-		nextMetadataResolveTime = Time.unscaledTime + MetadataRetryDelay;
-		cadaverGrowthType = AppDomain.CurrentDomain.GetAssemblies()
-			.Select(assembly => assembly.GetType("CadaverGrowthAI", throwOnError: false))
-			.FirstOrDefault(type => type != null);
-		if (cadaverGrowthType == null)
-		{
-			return false;
+			return capacity;
 		}
-
-		playerInfectionsField = cadaverGrowthType.GetField("playerInfections", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-		if (playerInfectionsField == null)
-		{
-			return false;
-		}
-
-		Type? playerInfectionType = cadaverGrowthType.GetNestedType("PlayerInfection", BindingFlags.Public | BindingFlags.NonPublic);
-		if (playerInfectionType == null)
-		{
-			Type? arrayElementType = playerInfectionsField.FieldType.GetElementType();
-			playerInfectionType = arrayElementType;
-		}
-
-		if (playerInfectionType == null)
-		{
-			return false;
-		}
-
-		infectionMeterField = playerInfectionType.GetField("infectionMeter", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-		metadataResolved = infectionMeterField != null;
-		return metadataResolved;
 	}
 }

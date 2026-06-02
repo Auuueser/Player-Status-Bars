@@ -46,6 +46,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Remove="obj\**;tmpobj\**;tmpbin\**;tmpbin_sync\**;tmpbin_sync2\**" />
+    <Compile Remove="obj\**;tmpobj\**;tmpbin\**;tmpbin_sync\**;tmpbin_sync2\**;tests\**" />
   </ItemGroup>
 </Project>

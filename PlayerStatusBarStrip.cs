@@ -32,6 +32,8 @@ internal sealed class PlayerStatusBarStrip : MonoBehaviour
 
 	private RectTransform rectTransform = null!;
 
+	private RectTransform fillRect = null!;
+
 	private Image backgroundImage = null!;
 
 	private Image fillImage = null!;
@@ -39,8 +41,6 @@ internal sealed class PlayerStatusBarStrip : MonoBehaviour
 	private TextMeshProUGUI text = null!;
 
 	private Outline border = null!;
-
-	private RectTransform fillRect = null!;
 
 	private bool dirty = true;
 
@@ -86,18 +86,21 @@ internal sealed class PlayerStatusBarStrip : MonoBehaviour
 		backgroundRect.offsetMin = Vector2.zero;
 		backgroundRect.offsetMax = Vector2.zero;
 		backgroundImage = backgroundObject.GetComponent<Image>();
+		backgroundImage.raycastTarget = false;
 		border = backgroundObject.GetComponent<Outline>();
 
 		GameObject fillObject = new("Fill", typeof(RectTransform), typeof(Image));
 		fillObject.transform.SetParent(backgroundObject.transform, worldPositionStays: false);
-		RectTransform fillRect = fillObject.GetComponent<RectTransform>();
-		fillRect.anchorMin = new Vector2(0f, 0f);
-		fillRect.anchorMax = new Vector2(0f, 1f);
+		fillRect = fillObject.GetComponent<RectTransform>();
+		fillRect.anchorMin = Vector2.zero;
+		fillRect.anchorMax = Vector2.one;
 		fillRect.pivot = new Vector2(0f, 0.5f);
 		fillRect.offsetMin = new Vector2(1f, 1f);
 		fillRect.offsetMax = new Vector2(-1f, -1f);
+		fillRect.localScale = Vector3.one;
 		fillImage = fillObject.GetComponent<Image>();
-		this.fillRect = fillRect;
+		fillImage.raycastTarget = false;
+		fillImage.type = Image.Type.Simple;
 
 		GameObject textObject = new("Text", typeof(RectTransform), typeof(TextMeshProUGUI));
 		textObject.transform.SetParent(backgroundObject.transform, worldPositionStays: false);
@@ -111,6 +114,7 @@ internal sealed class PlayerStatusBarStrip : MonoBehaviour
 		text.fontSize = 12f;
 		text.enableWordWrapping = false;
 		text.color = Color.white;
+		text.raycastTarget = false;
 	}
 
 	public void SetDisplay(string displayLabel, float value, float max, bool showPercent)
@@ -175,7 +179,7 @@ internal sealed class PlayerStatusBarStrip : MonoBehaviour
 		dirty = true;
 	}
 
-	private void LateUpdate()
+	public void ApplyIfDirty(StatusBarConfig settings)
 	{
 		if (backgroundImage == null || fillImage == null || text == null)
 		{
@@ -187,7 +191,6 @@ internal sealed class PlayerStatusBarStrip : MonoBehaviour
 			return;
 		}
 
-		StatusBarConfig settings = Plugin.Settings;
 		if (!dirty && settings.Revision == lastAppliedSettingsRevision)
 		{
 			return;
@@ -204,11 +207,15 @@ internal sealed class PlayerStatusBarStrip : MonoBehaviour
 		Color backgroundColor = settings.GetBackgroundColor();
 		Color borderColor = settings.GetBorderColor();
 		bool showText = stripType == StripType.Health ? settings.ShowHealthText : settings.ShowInfectionText;
-		string formattedText = labelOnly
-			? label
-			: renderAsPercent
-			? $"{label} {Mathf.RoundToInt(normalizedValue * 100f)}%"
-			: $"{label} {Mathf.RoundToInt(currentValue)}/{Mathf.RoundToInt(maxValue)}";
+		string formattedText = string.Empty;
+		if (showText)
+		{
+			formattedText = labelOnly
+				? label
+				: renderAsPercent
+				? StatusBarTextCache.GetInfectionLabel(Mathf.RoundToInt(normalizedValue * 100f))
+				: StatusBarTextCache.GetHealthLabel(Mathf.RoundToInt(currentValue), Mathf.RoundToInt(maxValue));
+		}
 
 		bool styleChanged = backgroundColor != lastAppliedBackgroundColor
 			|| fillColor != lastAppliedFillColor
@@ -236,7 +243,7 @@ internal sealed class PlayerStatusBarStrip : MonoBehaviour
 
 		if (dirty || fillChanged)
 		{
-			fillRect.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, Mathf.Lerp(0f, Width - 2f, normalizedValue));
+			fillRect.localScale = new Vector3(normalizedValue, 1f, 1f);
 			lastAppliedNormalized = normalizedValue;
 		}
 

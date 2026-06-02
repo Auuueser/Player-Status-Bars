@@ -3,28 +3,39 @@ using UnityEngine;
 
 namespace OtherPlayerStatusBars;
 
-internal sealed class StatusBarBillboard : MonoBehaviour
+internal static class StatusBarBillboard
 {
 	private static int cachedCameraFrame = -1;
 
 	private static Camera? cachedCamera;
 
-	private void LateUpdate()
+	internal static void ApplyBillboardRotation(Transform target, Camera? viewCamera)
 	{
-		Camera? viewCamera = ResolveViewCamera();
-		if (viewCamera == null)
+		if (!TryResolveBillboardRotation(viewCamera, out Quaternion rotation))
 		{
 			return;
+		}
+
+		target.rotation = rotation;
+	}
+
+	internal static bool TryResolveBillboardRotation(Camera? viewCamera, out Quaternion rotation)
+	{
+		rotation = Quaternion.identity;
+		if (viewCamera == null)
+		{
+			return false;
 		}
 
 		Vector3 cameraForward = viewCamera.transform.forward;
 		Vector3 cameraUp = viewCamera.transform.up;
 		if (cameraForward == Vector3.zero || cameraUp == Vector3.zero)
 		{
-			return;
+			return false;
 		}
 
-		transform.rotation = Quaternion.LookRotation(cameraForward, cameraUp);
+		rotation = Quaternion.LookRotation(cameraForward, cameraUp);
+		return true;
 	}
 
 	internal static Camera? ResolveViewCamera()

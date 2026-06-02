@@ -2,6 +2,29 @@
 
 All notable changes to this project are documented here.
 
+## 0.2.0
+
+- Changed the project license from MIT to the GNU General Public License v3.0.
+- Added low-overhead player refresh with sliced slot scanning, slot-indexed tracking, and pooled status bar views for larger lobbies.
+- Added shared Cadaver Growth infection caching with bounded spawned-enemy lookup and absent-instance backoff.
+- Added one-point health display stepping so health changes move smoothly toward the current target.
+- Added one-percent infection display stepping from 1% to 99%, with immediate downward updates for cure and infection reduction.
+- Improved vanilla low-health display by predicting recovery toward 20 HP when remote clients expose stale low-health values.
+- Improved stale 20 HP critical-state handling by inferring vanilla downed health when synced critical or bleeding state indicates a low-health transition.
+- Added `Critical Health Sync Mode` with `VanillaPrediction` and `TrustRawHealthAt20` options for active-bleed and custom-injury mod compatibility.
+- Improved health and infection reset behavior across death, revive, round transitions, and late-join slot reuse.
+- Improved connected-player detection for late-join and extended-lobby scenarios where `isPlayerControlled` is not a sufficient visibility signal.
+- Improved low-health visual feedback by switching the health bar to the red low-health state as soon as the target health is below 20 HP.
+
+## 0.1.3
+
+- Reduced per-player frame overhead by folding billboard rotation into the main status bar view update instead of adding a second `LateUpdate` component per bar.
+- Reduced UI callback overhead by applying status bar strip updates from the parent view only when data or settings are dirty.
+- Removed non-debug distance square-root work from the visibility hot path; real distance is now formatted only after debug logging passes its throttle gate.
+- Reworked Cadaver Growth integration to use direct game types and cached spawned enemy lookup instead of runtime reflection, `GetType`, field lookup, or object-wide searches.
+- Removed optional LethalConfig reflection integration to keep runtime behavior reflection-free and lower overhead.
+- Added structural performance tests that guard against reintroducing runtime reflection, per-strip callbacks, per-bar billboard callbacks, and hot-path distance square roots.
+
 ## 0.1.2
 
 - Improved late-join handling for reused player slots so newly joined players no longer inherit stale critical or low-health bar states.

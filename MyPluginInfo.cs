@@ -2,9 +2,9 @@ namespace OtherPlayerStatusBars;
 
 internal static class MyPluginInfo
 {
-	public const string PluginGuid = "Codex.OtherPlayerStatusBars";
+	public const string PluginGuid = "playerstatusbars";
 
-	public const string PluginName = "OtherPlayerStatusBars";
+	public const string PluginName = "PlayerStatusBars";
 
-	public const string PluginVersion = "0.1.2";
+	public const string PluginVersion = "0.2.0";
 }

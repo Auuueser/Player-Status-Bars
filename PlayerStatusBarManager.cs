@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using GameNetcodeStuff;
 using UnityEngine;
@@ -8,15 +9,27 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 {
 	private const float DebugSummaryInterval = 5f;
 
-	private readonly Dictionary<int, PlayerStatusBarView> trackedBars = new();
+	private const float ActiveRefreshInterval = 0.5f;
 
-	private readonly HashSet<int> seenPlayerIds = new();
+	private const float IdleRefreshInterval = 2.5f;
 
-	private readonly List<int> staleIds = new();
+	private const int ScanSlotsPerRefresh = 4;
+
+	private const int MinimumPlayerSlotCapacity = 16;
+
+	private PlayerStatusBarView?[] trackedBarsBySlot = Array.Empty<PlayerStatusBarView?>();
+
+	private int activeBarCount;
+
+	private int activePlayerSlotCount;
+
+	private readonly Stack<PlayerStatusBarView> pooledBars = new();
 
 	private float nextRefreshTime;
 
 	private float nextDebugSummaryTime;
+
+	private int refreshScanCursor;
 
 	private void Start()
 	{
@@ -25,103 +38,257 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 
 	private void Update()
 	{
-		if (!Plugin.Settings.Enabled)
+		StatusBarConfig settings = Plugin.Settings;
+		if (!settings.Enabled)
 		{
+			if (activeBarCount == 0 && Time.unscaledTime < nextRefreshTime)
+			{
+				return;
+			}
+
 			LogDebugBlocked("disabled");
 			ClearBars();
+			ScheduleNextRefresh(hasActiveBars: false);
 			return;
 		}
 
-		if (Time.unscaledTime < nextRefreshTime)
+		if (activeBarCount == 0 && Time.unscaledTime < nextRefreshTime)
 		{
 			return;
 		}
 
-		nextRefreshTime = Time.unscaledTime + 0.5f;
-		RefreshBars();
-	}
-
-	private void RefreshBars()
-	{
 		StartOfRound? startOfRound = StartOfRound.Instance;
 		PlayerControllerB? localPlayer = GameNetworkManager.Instance != null
 			? GameNetworkManager.Instance.localPlayerController
 			: startOfRound?.localPlayerController;
-
-		if (startOfRound == null || localPlayer == null || startOfRound.allPlayerScripts == null)
+		PlayerControllerB[]? allPlayers = startOfRound?.allPlayerScripts;
+		if (startOfRound == null || localPlayer == null || allPlayers == null)
 		{
-			LogDebugBlocked($"not-ready startOfRound={startOfRound != null} localPlayer={localPlayer != null} allPlayers={startOfRound?.allPlayerScripts != null}");
-			ClearBars();
+			if (Time.unscaledTime >= nextRefreshTime)
+			{
+				ScheduleNextRefresh(hasActiveBars: false);
+				LogDebugBlocked($"not-ready startOfRound={startOfRound != null} localPlayer={localPlayer != null} allPlayers={allPlayers != null}");
+				ClearBars();
+			}
+
 			return;
 		}
 
-		if (ShouldSkipBarsForShipState(startOfRound))
+		EnsureSlotCapacity(allPlayers.Length);
+		bool canShowGroup = !ShouldSkipBarsForShipState(startOfRound);
+		if (!canShowGroup)
 		{
-			LogDebugBlocked($"orbit-hidden inShipPhase={startOfRound.inShipPhase} shipHasLanded={startOfRound.shipHasLanded} shipDoorsEnabled={startOfRound.shipDoorsEnabled} shipIsLeaving={startOfRound.shipIsLeaving} dayStarted={TimeOfDay.Instance?.currentDayTimeStarted}");
+			if (Time.unscaledTime >= nextRefreshTime)
+			{
+				LogDebugBlocked($"orbit-hidden inShipPhase={startOfRound.inShipPhase} shipHasLanded={startOfRound.shipHasLanded} shipDoorsEnabled={startOfRound.shipDoorsEnabled} shipIsLeaving={startOfRound.shipIsLeaving} dayStarted={TimeOfDay.Instance?.currentDayTimeStarted}");
+			}
+
 			ClearBars();
+			ScheduleNextRefresh(hasActiveBars: false);
 			return;
 		}
 
-		seenPlayerIds.Clear();
-		PlayerControllerB[] allPlayers = startOfRound.allPlayerScripts;
+		if (Time.unscaledTime >= nextRefreshTime)
+		{
+			RefreshPlayerSlice(startOfRound, localPlayer, allPlayers);
+		}
+
+		if (activeBarCount == 0)
+		{
+			return;
+		}
+
+		PlayerStatusFrameContext frameContext = CreateFrameContext(settings, localPlayer, canShowGroup);
+		TickTrackedBars(frameContext);
+	}
+
+	private void RefreshPlayerSlice(StartOfRound startOfRound, PlayerControllerB localPlayer, PlayerControllerB[] allPlayers)
+	{
 		bool logDetails = Plugin.Settings.DebugLogging && Time.unscaledTime >= nextDebugSummaryTime;
 		int createdCount = 0;
-		int existingCount = 0;
+		int existingCount = activeBarCount;
 		int skippedCount = 0;
-		for (int i = 0; i < allPlayers.Length; i++)
+		if (allPlayers.Length == 0)
 		{
-			PlayerControllerB player = allPlayers[i];
-			if (!ShouldTrackPlayer(player, localPlayer, out string skipReason))
+			ClearBars();
+			LogDebugSummary(startOfRound, localPlayer, 0, createdCount, existingCount, skippedCount);
+			ScheduleNextRefresh(createdCount > 0 || existingCount > 0 || allPlayers.Length > ScanSlotsPerRefresh);
+			return;
+		}
+
+		int slotsToScan = Mathf.Min(ScanSlotsPerRefresh, allPlayers.Length);
+		for (int scanned = 0; scanned < slotsToScan; scanned++)
+		{
+			int slot = refreshScanCursor;
+			refreshScanCursor = (refreshScanCursor + 1) % allPlayers.Length;
+			PlayerControllerB player = allPlayers[slot];
+			if (!ShouldTrackPlayer(startOfRound, player, localPlayer, slot, allPlayers, out string skipReason))
 			{
 				skippedCount++;
 				if (logDetails)
 				{
-					LogDebugPlayerSkip(i, player, skipReason);
+					LogDebugPlayerSkip(slot, player, skipReason);
 				}
+				RemoveBar(slot);
 				continue;
 			}
 
-			int playerKey = ResolvePlayerKey(player, i, allPlayers);
-			seenPlayerIds.Add(playerKey);
-			if (trackedBars.ContainsKey(playerKey))
+			PlayerStatusBarView? existingView = trackedBarsBySlot[slot];
+			if (existingView != null && existingView.IsStillValid(localPlayer) && existingView.PlayerId == ResolvePlayerKey(player, slot, allPlayers))
 			{
-				existingCount++;
 				continue;
 			}
 
-			GameObject viewObject = new($"OtherPlayerStatusBar_{playerKey}");
-			viewObject.transform.SetParent(transform, worldPositionStays: false);
-			PlayerStatusBarView view = viewObject.AddComponent<PlayerStatusBarView>();
-			if (!view.Initialize(player))
+			if (existingView != null)
 			{
-				Destroy(viewObject);
+				RemoveBar(slot);
+			}
+
+			int playerKey = ResolvePlayerKey(player, slot, allPlayers);
+			PlayerStatusBarView? view = RentBarView(playerKey, player);
+			if (view == null)
+			{
 				Plugin.Log.LogWarning($"Failed to create player status bar for playerKey={playerKey}.");
 				continue;
 			}
 
-			trackedBars[playerKey] = view;
+			trackedBarsBySlot[slot] = view;
+			activeBarCount++;
 			createdCount++;
-			Plugin.LogDebug($"Created bar playerKey={playerKey} slot={i} clientId={player.playerClientId} name='{player.playerUsername}' health={player.health} active={player.gameObject.activeInHierarchy}.");
-		}
-
-		staleIds.Clear();
-		foreach (KeyValuePair<int, PlayerStatusBarView> pair in trackedBars)
-		{
-			if (!seenPlayerIds.Contains(pair.Key) || pair.Value == null || !pair.Value.IsStillValid(localPlayer))
-			{
-				staleIds.Add(pair.Key);
-			}
-		}
-
-		for (int i = 0; i < staleIds.Count; i++)
-		{
-			RemoveBar(staleIds[i]);
+			Plugin.LogDebug($"Created bar playerKey={playerKey} slot={slot} clientId={player.playerClientId} name='{player.playerUsername}' health={player.health} active={player.gameObject.activeInHierarchy}.");
 		}
 
 		LogDebugSummary(startOfRound, localPlayer, allPlayers.Length, createdCount, existingCount, skippedCount);
+		ScheduleNextRefresh(createdCount > 0 || existingCount > 0 || allPlayers.Length > ScanSlotsPerRefresh);
 	}
 
-	private static bool ShouldTrackPlayer(PlayerControllerB player, PlayerControllerB localPlayer, out string skipReason)
+	private void EnsureSlotCapacity(int slotCount)
+	{
+		if (slotCount < activePlayerSlotCount)
+		{
+			ReleaseBarsFrom(slotCount);
+		}
+
+		activePlayerSlotCount = slotCount;
+		if (slotCount == 0 || refreshScanCursor >= slotCount)
+		{
+			refreshScanCursor = 0;
+		}
+
+		if (trackedBarsBySlot.Length >= slotCount)
+		{
+			return;
+		}
+
+		int previousCapacity = trackedBarsBySlot.Length;
+		PlayerStatusBarView?[] resizedBars = new PlayerStatusBarView?[GrowSlotCapacity(slotCount)];
+		if (previousCapacity > 0)
+		{
+			Array.Copy(trackedBarsBySlot, resizedBars, previousCapacity);
+		}
+
+		trackedBarsBySlot = resizedBars;
+	}
+
+	private static int GrowSlotCapacity(int requiredCapacity)
+	{
+		int capacity = MinimumPlayerSlotCapacity;
+		while (capacity < requiredCapacity)
+		{
+			capacity *= 2;
+		}
+
+		return capacity;
+	}
+
+	private void ScheduleNextRefresh(bool hasActiveBars)
+	{
+		nextRefreshTime = Time.unscaledTime + (hasActiveBars ? ActiveRefreshInterval : IdleRefreshInterval);
+	}
+
+	private PlayerStatusBarView? RentBarView(int playerKey, PlayerControllerB player)
+	{
+		PlayerStatusBarView view;
+		if (pooledBars.Count > 0)
+		{
+			view = pooledBars.Pop();
+			view.transform.SetParent(transform, worldPositionStays: false);
+			view.name = $"OtherPlayerStatusBar_{playerKey}";
+			view.Bind(player);
+			return view;
+		}
+
+		GameObject viewObject = new($"OtherPlayerStatusBar_{playerKey}");
+		viewObject.transform.SetParent(transform, worldPositionStays: false);
+		view = viewObject.AddComponent<PlayerStatusBarView>();
+		if (view.Initialize(player))
+		{
+			return view;
+		}
+
+		Destroy(viewObject);
+		return null;
+	}
+
+	private void ReleaseBarView(PlayerStatusBarView view)
+	{
+		view.Release();
+		view.transform.SetParent(transform, worldPositionStays: false);
+		pooledBars.Push(view);
+	}
+
+	private void TickTrackedBars(in PlayerStatusFrameContext frameContext)
+	{
+		for (int i = 0; i < activePlayerSlotCount; i++)
+		{
+			PlayerStatusBarView? view = trackedBarsBySlot[i];
+			if (view != null)
+			{
+				view.Tick(frameContext);
+			}
+		}
+	}
+
+	private static PlayerStatusFrameContext CreateFrameContext(StatusBarConfig settings, PlayerControllerB localPlayer, bool canShowGroup)
+	{
+		Camera? viewCamera = null;
+		bool hasBillboardRotation = false;
+		Quaternion billboardRotation = Quaternion.identity;
+		Vector3 observerPosition = localPlayer.transform.position;
+		if (canShowGroup)
+		{
+			viewCamera = StatusBarBillboard.ResolveViewCamera();
+			hasBillboardRotation = StatusBarBillboard.TryResolveBillboardRotation(viewCamera, out billboardRotation);
+			observerPosition = ResolveObserverPosition(localPlayer, viewCamera);
+		}
+
+		return new PlayerStatusFrameContext(
+			settings,
+			localPlayer,
+			viewCamera,
+			hasBillboardRotation,
+			billboardRotation,
+			canShowGroup,
+			observerPosition);
+	}
+
+	private static Vector3 ResolveObserverPosition(PlayerControllerB localPlayer, Camera? viewCamera)
+	{
+		if (viewCamera != null)
+		{
+			return viewCamera.transform.position;
+		}
+
+		PlayerControllerB? spectatedPlayer = localPlayer.spectatedPlayerScript;
+		if (localPlayer.isPlayerDead && spectatedPlayer != null && !spectatedPlayer.isPlayerDead)
+		{
+			return spectatedPlayer.transform.position;
+		}
+
+		return localPlayer.transform.position;
+	}
+
+	private static bool ShouldTrackPlayer(StartOfRound startOfRound, PlayerControllerB player, PlayerControllerB localPlayer, int slot, PlayerControllerB[] allPlayers, out string skipReason)
 	{
 		if (player == null || localPlayer == null)
 		{
@@ -135,21 +302,9 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 			return false;
 		}
 
-		if (!player.isPlayerControlled)
+		if (player.disconnectedMidGame)
 		{
-			skipReason = "not-controlled";
-			return false;
-		}
-
-		if (player.isPlayerDead)
-		{
-			skipReason = "dead";
-			return false;
-		}
-
-		if (player.health <= 0)
-		{
-			skipReason = "non-positive-health";
+			skipReason = "disconnected";
 			return false;
 		}
 
@@ -159,8 +314,25 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 			return false;
 		}
 
+		int playerKey = ResolvePlayerKey(player, slot, allPlayers);
+		if (!IsConnectedPlayerSlot(startOfRound, player, playerKey))
+		{
+			skipReason = "not-connected";
+			return false;
+		}
+
 		skipReason = string.Empty;
 		return true;
+	}
+
+	private static bool IsConnectedPlayerSlot(StartOfRound startOfRound, PlayerControllerB player, int playerKey)
+	{
+		if (player.isPlayerControlled)
+		{
+			return true;
+		}
+
+		return startOfRound.ClientPlayerList.TryGetValue(player.actualClientId, out int mappedSlot) && mappedSlot == playerKey;
 	}
 
 	private static int ResolvePlayerKey(PlayerControllerB player, int slotIndex, PlayerControllerB[] allPlayers)
@@ -201,41 +373,81 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 
 	private void RemoveBar(int playerId)
 	{
-		if (!trackedBars.TryGetValue(playerId, out PlayerStatusBarView? view))
+		if (playerId < 0 || playerId >= trackedBarsBySlot.Length)
 		{
 			return;
 		}
 
-		trackedBars.Remove(playerId);
+		PlayerStatusBarView? view = trackedBarsBySlot[playerId];
+		if (view == null)
+		{
+			return;
+		}
+
+		trackedBarsBySlot[playerId] = null;
+		activeBarCount--;
 		if (view != null)
 		{
-			Destroy(view.gameObject);
+			ReleaseBarView(view);
 		}
 		Plugin.LogDebug($"Removed bar playerKey={playerId}.");
 	}
 
 	private void ClearBars()
 	{
-		int clearedCount = trackedBars.Count;
-		foreach (KeyValuePair<int, PlayerStatusBarView> pair in trackedBars)
+		int clearedCount = activeBarCount;
+		for (int i = 0; i < trackedBarsBySlot.Length; i++)
 		{
-			if (pair.Value != null)
+			PlayerStatusBarView? view = trackedBarsBySlot[i];
+			if (view != null)
 			{
-				Destroy(pair.Value.gameObject);
+				trackedBarsBySlot[i] = null;
+				ReleaseBarView(view);
 			}
 		}
 
-		trackedBars.Clear();
+		activeBarCount = 0;
 		if (clearedCount > 0)
 		{
 			Plugin.LogDebug($"Cleared all bars count={clearedCount}.");
 		}
 	}
 
+	private void ReleaseBarsFrom(int firstSlot)
+	{
+		for (int i = firstSlot; i < trackedBarsBySlot.Length; i++)
+		{
+			RemoveBar(i);
+		}
+	}
+
 	private void OnDestroy()
 	{
-		Plugin.LogDebug($"Runtime manager destroyed tracked={trackedBars.Count}.");
-		ClearBars();
+		Plugin.LogDebug($"Runtime manager destroyed tracked={activeBarCount}.");
+		DestroyAllBars();
+	}
+
+	private void DestroyAllBars()
+	{
+		for (int i = 0; i < trackedBarsBySlot.Length; i++)
+		{
+			PlayerStatusBarView? view = trackedBarsBySlot[i];
+			if (view != null)
+			{
+				Destroy(view.gameObject);
+			}
+		}
+
+		trackedBarsBySlot = Array.Empty<PlayerStatusBarView?>();
+		activeBarCount = 0;
+		while (pooledBars.Count > 0)
+		{
+			PlayerStatusBarView view = pooledBars.Pop();
+			if (view != null)
+			{
+				Destroy(view.gameObject);
+			}
+		}
 	}
 
 	private void OnEnable()
@@ -246,7 +458,7 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 
 	private void OnDisable()
 	{
-		Plugin.LogDebug($"Runtime manager disabled tracked={trackedBars.Count}.");
+		Plugin.LogDebug($"Runtime manager disabled tracked={activeBarCount}.");
 		Plugin.Settings.SettingsChanged -= HandleSettingsChanged;
 	}
 
@@ -263,7 +475,7 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 		}
 
 		nextDebugSummaryTime = Time.unscaledTime + DebugSummaryInterval;
-		Plugin.LogDebug($"Refresh blocked reason={reason} tracked={trackedBars.Count}.");
+		Plugin.LogDebug($"Refresh blocked reason={reason} tracked={activeBarCount}.");
 	}
 
 	private static void LogDebugPlayerSkip(int slot, PlayerControllerB player, string reason)
@@ -285,6 +497,6 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 
 		nextDebugSummaryTime = Time.unscaledTime + DebugSummaryInterval;
 		Camera? viewCamera = StatusBarBillboard.ResolveViewCamera();
-		Plugin.LogDebug($"Refresh summary slots={playerSlots} tracked={trackedBars.Count} created={createdCount} existing={existingCount} skipped={skippedCount} localClient={localPlayer.playerClientId} inShipPhase={startOfRound.inShipPhase} shipHasLanded={startOfRound.shipHasLanded} shipDoorsEnabled={startOfRound.shipDoorsEnabled} shipIsLeaving={startOfRound.shipIsLeaving} dayStarted={TimeOfDay.Instance?.currentDayTimeStarted} camera='{(viewCamera != null ? viewCamera.name : "none")}'.");
+		Plugin.LogDebug($"Refresh summary slots={playerSlots} tracked={activeBarCount} created={createdCount} existing={existingCount} skipped={skippedCount} localClient={localPlayer.playerClientId} inShipPhase={startOfRound.inShipPhase} shipHasLanded={startOfRound.shipHasLanded} shipDoorsEnabled={startOfRound.shipDoorsEnabled} shipIsLeaving={startOfRound.shipIsLeaving} dayStarted={TimeOfDay.Instance?.currentDayTimeStarted} camera='{(viewCamera != null ? viewCamera.name : "none")}'.");
 	}
 }

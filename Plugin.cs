@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using BepInEx;
 using BepInEx.Bootstrap;
 using BepInEx.Logging;
@@ -6,11 +7,12 @@ using UnityEngine;
 
 namespace OtherPlayerStatusBars;
 
-[BepInDependency("ainavt.lc.lethalconfig", BepInDependency.DependencyFlags.SoftDependency)]
 [BepInPlugin(MyPluginInfo.PluginGuid, MyPluginInfo.PluginName, MyPluginInfo.PluginVersion)]
 public sealed class Plugin : BaseUnityPlugin
 {
-	private const string RuntimeObjectName = "OtherPlayerStatusBars.Runtime";
+	private const string RuntimeObjectName = "PlayerStatusBars.Runtime";
+
+	private const string LegacyConfigFileName = "Codex.OtherPlayerStatusBars.cfg";
 
 	private static GameObject? runtimeObject;
 
@@ -25,12 +27,12 @@ public sealed class Plugin : BaseUnityPlugin
 	private void Awake()
 	{
 		Log = Logger;
+		MigrateLegacyConfigFile();
 		Settings = StatusBarConfig.Create(Config);
 		UseChineseCriticalLabel = DetectChineseLocalizationMod();
-		TryRegisterLethalConfig();
 		EnsureRuntimeManager();
 		Config.Save();
-		Log.LogInfo("OtherPlayerStatusBars loaded.");
+		Log.LogInfo("PlayerStatusBars loaded.");
 		LogDebug("Debug logging is enabled.");
 	}
 
@@ -45,6 +47,26 @@ public sealed class Plugin : BaseUnityPlugin
 		{
 			Log.LogInfo($"[Debug] {message}");
 		}
+	}
+
+	private void MigrateLegacyConfigFile()
+	{
+		string configPath = Config.ConfigFilePath;
+		string? configDirectory = Path.GetDirectoryName(configPath);
+		if (string.IsNullOrEmpty(configDirectory))
+		{
+			return;
+		}
+
+		string legacyPath = Path.Combine(configDirectory, LegacyConfigFileName);
+		if (!File.Exists(legacyPath) || File.Exists(configPath))
+		{
+			return;
+		}
+
+		File.Copy(legacyPath, configPath);
+		Config.Reload();
+		Log.LogInfo($"Migrated legacy config from {LegacyConfigFileName} to {Path.GetFileName(configPath)}.");
 	}
 
 	private static void EnsureRuntimeManager()
@@ -115,20 +137,4 @@ public sealed class Plugin : BaseUnityPlugin
 		return value.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0;
 	}
 
-	private static void TryRegisterLethalConfig()
-	{
-		if (Type.GetType("LethalConfig.LethalConfigManager, LethalConfig", false) == null)
-		{
-			return;
-		}
-
-		try
-		{
-			StatusBarConfig.LethalConfigIntegration.Register(Settings);
-		}
-		catch (Exception exception)
-		{
-			Log.LogWarning($"Failed to register LethalConfig items: {exception}");
-		}
-	}
 }

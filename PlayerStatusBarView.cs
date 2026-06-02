@@ -1,6 +1,5 @@
 using GameNetcodeStuff;
 using UnityEngine;
-using UnityEngine.UI;
 
 namespace OtherPlayerStatusBars;
 
@@ -8,17 +7,23 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 {
 	private static readonly Color CriticalHealthBarColor = new(0.88f, 0.15f, 0.12f, 0.95f);
 
-	private const float LowHealthRecoveryDisplayDelay = 15f;
+	private const int LowHealthRegenerationTarget = 20;
 
-	private const float LowHealthConfirmDelay = 0.5f;
+	private const int InferredCriticalHealth = 5;
 
-	private const float InitialStateStabilizationDelay = 3f;
+	private const float LowHealthRegenerationInterval = 1f;
 
-	private readonly CadaverGrowthInfectionProvider infectionProvider = new();
+	private const float HealthDisplayStepInterval = 0.05f;
+
+	private const int InfectionDisplayMinimumPercent = 1;
+
+	private const int InfectionDisplayMaximumPercent = 99;
+
+	private const float InfectionPredictionWindow = 0.5f;
+
+	private const float InfectionDisplayStepInterval = 0.1f;
 
 	private PlayerControllerB targetPlayer = null!;
-
-	private PlayerControllerB? localPlayer;
 
 	private Transform? anchor;
 
@@ -42,14 +47,6 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 
 	private bool wasInfectionVisible;
 
-	private bool isLowHealthRecoveryTiming;
-
-	private float lowHealthRecoveryTimer;
-
-	private bool isLowHealthConfirming;
-
-	private float lowHealthConfirmTimer;
-
 	private string lastDisplayedHealthLabel = string.Empty;
 
 	private bool lastCanvasEnabled = true;
@@ -66,29 +63,68 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 
 	private float lastAppliedInfectionBarYOffset = float.NaN;
 
-	private float initializedAtTime;
+	private bool isLowHealthPredictionActive;
 
-	private bool suppressInitialStaleCriticalState;
+	private bool wasTargetDead;
 
-	private bool suppressInitialStaleHealthState;
+	private bool hasObservedRawHealth;
 
-	private bool hasCompletedInitialStateStabilization;
+	private bool hasObservedDamageTimestamp;
 
-	private bool hasObservedStableNonCriticalState;
+	private bool hasObservedRawCriticalState;
+
+	private bool lastObservedRawCriticalState;
+
+	private bool holdNaturalRecoveredLowHealthDisplay;
+
+	private bool isInfectionPredictionActive;
+
+	private bool hasDisplayedHealth;
+
+	private bool hasDisplayedInfectionPercent;
+
+	private int lastObservedRawHealth = int.MinValue;
+
+	private int predictionObservedRawHealth = int.MinValue;
+
+	private int predictionStartHealth = int.MinValue;
+
+	private int predictedLowHealth = int.MinValue;
+
+	private int displayedHealth = int.MinValue;
+
+	private int healthDisplayTarget = int.MinValue;
+
+	private int naturalRecoveredRawHealth = int.MinValue;
+
+	private int displayedInfectionPercent = int.MinValue;
+
+	private float lowHealthPredictionStartTime;
+
+	private float lastObservedDamageTimestamp;
+
+	private float lastObservedInfectionMeter;
+
+	private float lastObservedInfectionSampleTime;
+
+	private float infectionPredictionStartMeter;
+
+	private float infectionPredictionStartTime;
+
+	private float infectionPredictionRate;
+
+	private float nextHealthDisplayStepTime;
+
+	private float nextInfectionDisplayStepTime;
 
 	public int PlayerId => targetPlayer != null ? (int)targetPlayer.playerClientId : -1;
 
 	public bool Initialize(PlayerControllerB player)
 	{
-		targetPlayer = player;
-		anchor = ResolveAnchor(player);
-		initializedAtTime = Time.unscaledTime;
-		gameObject.AddComponent<StatusBarBillboard>();
 		worldCanvas = gameObject.AddComponent<Canvas>();
 		worldCanvas.renderMode = RenderMode.WorldSpace;
 		worldCanvas.overrideSorting = true;
 		worldCanvas.sortingOrder = 50;
-		gameObject.AddComponent<CanvasScaler>();
 		canvasRect = worldCanvas.GetComponent<RectTransform>();
 		canvasRect.sizeDelta = new Vector2(220f, 84f);
 
@@ -104,8 +140,40 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 		}
 		infectionStripRect = infectionStrip.GetComponent<RectTransform>();
 
-		name = $"PlayerStatusBar_{player.playerClientId}";
+		Bind(player);
 		return true;
+	}
+
+	internal void Bind(PlayerControllerB player)
+	{
+		targetPlayer = player;
+		anchor = ResolveAnchor(player);
+		ResetRuntimeState();
+		name = $"PlayerStatusBar_{player.playerClientId}";
+		gameObject.SetActive(true);
+	}
+
+	internal void Release()
+	{
+		if (worldCanvas != null)
+		{
+			SetCanvasEnabled(false);
+		}
+
+		if (healthStrip != null)
+		{
+			healthStrip.SetVisible(false);
+		}
+
+		if (infectionStrip != null)
+		{
+			infectionStrip.SetVisible(false);
+		}
+
+		targetPlayer = null!;
+		anchor = null;
+		ResetRuntimeState();
+		gameObject.SetActive(false);
 	}
 
 	public bool IsStillValid(PlayerControllerB localPlayer)
@@ -115,116 +183,66 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 			return false;
 		}
 
-		if (targetPlayer == localPlayer || !targetPlayer.isPlayerControlled || targetPlayer.isPlayerDead)
+		if (targetPlayer == localPlayer)
 		{
 			return false;
 		}
 
-		return targetPlayer.gameObject.activeInHierarchy;
+		return !targetPlayer.disconnectedMidGame && targetPlayer.gameObject.activeInHierarchy;
 	}
 
-	private void LateUpdate()
+	internal void Tick(in PlayerStatusFrameContext context)
 	{
 		if (targetPlayer == null)
 		{
 			return;
 		}
 
-		localPlayer = GameNetworkManager.Instance != null
-			? GameNetworkManager.Instance.localPlayerController
-			: StartOfRound.Instance?.localPlayerController;
-		Camera? viewCamera = StatusBarBillboard.ResolveViewCamera();
-		ApplyCanvasCamera(viewCamera);
-		bool canShowGroup = ShouldShowGroup();
-
-		anchor ??= ResolveAnchor(targetPlayer);
-		float stripSpacing = Plugin.Settings.BarSpacing;
-		Vector3 anchorPosition = anchor != null ? anchor.position : targetPlayer.transform.position;
-		transform.position = anchorPosition + Vector3.up * (Plugin.Settings.HeadOffset + stripSpacing * Plugin.Settings.UiScale);
-		ApplyCanvasScale(Plugin.Settings.UiScale);
-		SetCanvasEnabled(canShowGroup);
-		bool targetReady = IsTargetReadyForDisplay();
-		if (!canShowGroup || !targetReady)
+		StatusBarConfig settings = context.Settings;
+		if (!context.CanShowGroup)
 		{
-			LogDebugVisibility(!canShowGroup ? "group-hidden" : "target-not-ready", viewCamera, -1f);
-			healthStrip.SetVisible(false);
-			infectionStrip.SetVisible(false);
-			wasHealthVisible = false;
-			wasInfectionVisible = false;
-			ResetLowHealthFallbackState();
-			ResetInitialStateStabilization();
+			HideAll(settings, "group-hidden", context.ViewCamera, -1f);
 			return;
 		}
-		bool isWithinDisplayDistance = ShouldShowForDistance(viewCamera, out float displayDistance);
-		ApplyStripLayoutOffsets();
+
+		bool targetIsDead = targetPlayer.isPlayerDead || targetPlayer.health <= 0;
+		HandleDeathStateTransition(targetIsDead);
+		bool targetReady = IsTargetReadyForDisplay();
+		if (!targetReady)
+		{
+			HideAll(settings, "target-not-ready", context.ViewCamera, -1f);
+			return;
+		}
+
+		anchor ??= ResolveAnchor(targetPlayer);
+		Vector3 anchorPosition = anchor != null ? anchor.position : targetPlayer.transform.position;
+		transform.position = anchorPosition + Vector3.up * context.AnchorYOffset;
+		if (context.HasBillboardRotation)
+		{
+			SetBillboardRotation(context.BillboardRotation);
+		}
+		ApplyCanvasCamera(context.ViewCamera);
+		ApplyCanvasScale(context.UiScale);
+		bool isWithinDisplayDistance = ShouldShowForDistance(context, out float displayDistanceSqr);
+		ApplyStripLayoutOffsets(settings);
 
 		int rawHealth = Mathf.Clamp(targetPlayer.health, 0, 100);
-		bool isCriticallyInjured = targetPlayer.criticallyInjured;
-		bool isBleedingHeavily = targetPlayer.bleedingHeavily;
-		bool rawCriticalState = isCriticallyInjured || isBleedingHeavily;
-		UpdateInitialStateStabilization(rawCriticalState, rawHealth);
-		bool isInCriticalState = rawCriticalState && !suppressInitialStaleCriticalState;
-		bool isInitialStaleHealthState = suppressInitialStaleHealthState && rawHealth <= 20 && !isInCriticalState;
-		int displayHealth = isInitialStaleHealthState ? 100 : rawHealth;
-		bool showLowHealthFallback = false;
-		if (!isInitialStaleHealthState && !isInCriticalState && rawHealth < 20 && !targetPlayer.isPlayerDead)
-		{
-			if (!isLowHealthRecoveryTiming)
-			{
-				if (!isLowHealthConfirming)
-				{
-					isLowHealthConfirming = true;
-					lowHealthConfirmTimer = 0f;
-				}
-				else
-				{
-					lowHealthConfirmTimer += Time.unscaledDeltaTime;
-				}
-
-				if (lowHealthConfirmTimer >= LowHealthConfirmDelay)
-				{
-					isLowHealthRecoveryTiming = true;
-					lowHealthRecoveryTimer = 0f;
-					isLowHealthConfirming = false;
-					lowHealthConfirmTimer = 0f;
-				}
-			}
-			else
-			{
-				lowHealthRecoveryTimer += Time.unscaledDeltaTime;
-			}
-
-			if (isLowHealthRecoveryTiming && lowHealthRecoveryTimer < LowHealthRecoveryDisplayDelay)
-			{
-				showLowHealthFallback = true;
-			}
-			else if (isLowHealthRecoveryTiming)
-			{
-				displayHealth = 20;
-			}
-		}
-		else if (isLowHealthRecoveryTiming || lowHealthRecoveryTimer > 0f || isLowHealthConfirming || lowHealthConfirmTimer > 0f)
-		{
-			ResetLowHealthFallbackState();
-		}
+		bool rawCriticalState = targetPlayer.criticallyInjured || targetPlayer.bleedingHeavily;
+		bool damageSignalChanged = ResolveDamageSignalChanged(targetPlayer.timeSinceTakingDamage);
+		bool criticalSignalChanged = ResolveCriticalSignalChanged(rawCriticalState);
+		bool lowHealthSignalChanged = damageSignalChanged || criticalSignalChanged;
+		int displayHealthTarget = ResolveDisplayHealth(rawHealth, rawCriticalState, lowHealthSignalChanged, settings.CriticalHealthMode);
+		int displayHealth = ResolveSteppedHealthDisplay(displayHealthTarget);
 
 		bool showHealth = isWithinDisplayDistance;
-		LogDebugVisibility(showHealth ? "visible" : "distance-hidden", viewCamera, displayDistance);
-		bool showCriticalHealthBar = isInCriticalState || showLowHealthFallback;
-		string healthLabel = showCriticalHealthBar ? GetCriticalHealthLabel() : "HP";
+		LogDebugVisibility(showHealth ? "visible" : "distance-hidden", context.ViewCamera, displayDistanceSqr);
+		bool showCriticalHealthBar = displayHealthTarget < LowHealthRegenerationTarget || displayHealth < LowHealthRegenerationTarget;
 		healthStrip.SetFillColorOverride(showCriticalHealthBar, CriticalHealthBarColor);
-		if (showHealth && (!wasHealthVisible || displayHealth != lastDisplayedHealth || healthLabel != lastDisplayedHealthLabel))
+		if (showHealth && (!wasHealthVisible || displayHealth != lastDisplayedHealth || lastDisplayedHealthLabel != "HP"))
 		{
-			if (showCriticalHealthBar)
-			{
-				healthStrip.SetLabelOnly(healthLabel, 100f, 100f);
-			}
-			else
-			{
-				healthStrip.SetDisplay(healthLabel, displayHealth, 100f, showPercent: false);
-			}
+			healthStrip.SetDisplay("HP", displayHealth, 100f, showPercent: false);
 			lastDisplayedHealth = displayHealth;
-			lastDisplayedHealthLabel = healthLabel;
+			lastDisplayedHealthLabel = "HP";
 		}
 		healthStrip.SetVisible(showHealth);
 		wasHealthVisible = showHealth;
@@ -233,16 +251,16 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 		bool hasInfectionValue = false;
 		if (isWithinDisplayDistance)
 		{
-			hasInfectionValue = infectionProvider.TryGetNormalizedInfection(targetPlayer, out infectionMeter);
+			hasInfectionValue = CadaverGrowthInfectionProvider.TryGetNormalizedInfection(targetPlayer, out infectionMeter);
 		}
 
-		bool showInfection = Plugin.Settings.InfectionDisplayMode == StatusBarConfig.InfectionBarDisplayMode.AlwaysVisible
+		bool showInfection = settings.InfectionDisplayMode == StatusBarConfig.InfectionBarDisplayMode.AlwaysVisible
 			? isWithinDisplayDistance
-			: isWithinDisplayDistance && hasInfectionValue && infectionMeter > 0f;
+			: isWithinDisplayDistance && hasInfectionValue;
 
 		if (showInfection)
 		{
-			int infectionPercent = Mathf.Clamp(Mathf.RoundToInt(infectionMeter * 100f), 0, 100);
+			int infectionPercent = ResolveDisplayInfectionPercent(infectionMeter, hasInfectionValue);
 			if (!wasInfectionVisible || infectionPercent != lastDisplayedInfectionPercent)
 			{
 				infectionStrip.SetDisplay("INF", infectionPercent, 100f, showPercent: true);
@@ -255,73 +273,396 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 		{
 			infectionStrip.SetVisible(false);
 			wasInfectionVisible = false;
+			ResetInfectionPrediction();
 		}
+
+		SetCanvasEnabled(showHealth || showInfection);
+		ApplyStripsIfDirty(settings);
 	}
 
 	private bool IsTargetReadyForDisplay()
 	{
-		return targetPlayer != null && targetPlayer.isPlayerControlled && !targetPlayer.isPlayerDead && targetPlayer.health > 0;
+		return targetPlayer != null
+			&& !targetPlayer.disconnectedMidGame
+			&& !targetPlayer.isPlayerDead
+			&& targetPlayer.health > 0
+			&& targetPlayer.gameObject.activeInHierarchy;
 	}
 
-	private void ResetLowHealthFallbackState()
+	private void ResetRuntimeState()
 	{
-		isLowHealthRecoveryTiming = false;
-		lowHealthRecoveryTimer = 0f;
-		isLowHealthConfirming = false;
-		lowHealthConfirmTimer = 0f;
+		lastDisplayedHealth = int.MinValue;
+		lastDisplayedInfectionPercent = int.MinValue;
+		wasHealthVisible = false;
+		wasInfectionVisible = false;
+		lastDisplayedHealthLabel = string.Empty;
+		lastDebugVisibilityState = string.Empty;
+		nextDebugVisibilityLogTime = 0f;
+		lastAppliedCanvasCamera = null;
+		lastAppliedUiScale = -1f;
+		lastAppliedHealthBarYOffset = float.NaN;
+		lastAppliedInfectionBarYOffset = float.NaN;
+		wasTargetDead = false;
+		hasObservedRawHealth = false;
+		ResetLowHealthSignals();
+		ResetLowHealthPrediction();
+		ResetNaturalRecoveredLowHealthHold();
+		ResetDisplayedHealth();
+		ResetInfectionPrediction();
+		ResetDisplayedInfectionPercent();
 	}
 
-	private static string GetCriticalHealthLabel()
+	private void HandleDeathStateTransition(bool targetIsDead)
 	{
-		return Plugin.UseChineseCriticalLabel ? "\u91cd\u4f24" : "CRITICAL";
-	}
-
-	private void UpdateInitialStateStabilization(bool rawCriticalState, int rawHealth)
-	{
-		if (!rawCriticalState && rawHealth > 20)
+		if (targetIsDead)
 		{
-			hasObservedStableNonCriticalState = true;
+			if (!wasTargetDead)
+			{
+				wasTargetDead = true;
+				lastDisplayedHealth = int.MinValue;
+				lastDisplayedHealthLabel = string.Empty;
+				ResetLowHealthSignals();
+				ResetLowHealthPrediction();
+				ResetNaturalRecoveredLowHealthHold();
+				ResetDisplayedHealth();
+				ResetInfectionPrediction();
+				ResetDisplayedInfectionPercent();
+			}
+
+			return;
 		}
 
-		if (!hasCompletedInitialStateStabilization)
+		if (wasTargetDead)
 		{
-			float age = Time.unscaledTime - initializedAtTime;
-			if (age <= InitialStateStabilizationDelay && !hasObservedStableNonCriticalState)
-			{
-				// Late-join and extended-player mods can briefly expose cloned/default player state.
-				// Keep that initial stale low-health or critical flag from becoming a persistent bar state.
-				if (rawHealth <= 20)
-				{
-					suppressInitialStaleHealthState = true;
-				}
+			wasTargetDead = false;
+			lastDisplayedHealth = int.MinValue;
+			lastDisplayedHealthLabel = string.Empty;
+			ResetLowHealthSignals();
+			ResetLowHealthPrediction();
+			ResetNaturalRecoveredLowHealthHold();
+			ResetDisplayedHealth();
+			ResetInfectionPrediction();
+			ResetDisplayedInfectionPercent();
+		}
+	}
 
-				if (rawCriticalState && rawHealth >= 20)
+	private bool ResolveDamageSignalChanged(float damageTimestamp)
+	{
+		if (!hasObservedDamageTimestamp)
+		{
+			hasObservedDamageTimestamp = true;
+			lastObservedDamageTimestamp = damageTimestamp;
+			return false;
+		}
+
+		if (damageTimestamp == lastObservedDamageTimestamp)
+		{
+			return false;
+		}
+
+		lastObservedDamageTimestamp = damageTimestamp;
+		return true;
+	}
+
+	private bool ResolveCriticalSignalChanged(bool rawCriticalState)
+	{
+		if (!hasObservedRawCriticalState)
+		{
+			hasObservedRawCriticalState = true;
+			lastObservedRawCriticalState = rawCriticalState;
+			return false;
+		}
+
+		if (rawCriticalState == lastObservedRawCriticalState)
+		{
+			return false;
+		}
+
+		lastObservedRawCriticalState = rawCriticalState;
+		return true;
+	}
+
+	private int ResolveDisplayHealth(int rawHealth, bool rawCriticalState, bool lowHealthSignalChanged, StatusBarConfig.CriticalHealthSyncMode criticalHealthMode)
+	{
+		bool rawHealthChanged = !hasObservedRawHealth || rawHealth != lastObservedRawHealth;
+		if (rawHealthChanged)
+		{
+			hasObservedRawHealth = true;
+			lastObservedRawHealth = rawHealth;
+		}
+
+		if (rawHealth <= 0)
+		{
+			ResetLowHealthPrediction();
+			ResetNaturalRecoveredLowHealthHold();
+			return rawHealth;
+		}
+
+		if (holdNaturalRecoveredLowHealthDisplay)
+		{
+			if (rawHealth != naturalRecoveredRawHealth || lowHealthSignalChanged)
+			{
+				ResetNaturalRecoveredLowHealthHold();
+			}
+			else
+			{
+				return LowHealthRegenerationTarget;
+			}
+		}
+
+		if (ShouldInferVanillaCriticalHealth(rawHealth, rawCriticalState, criticalHealthMode))
+		{
+			if (!isLowHealthPredictionActive || rawHealth != predictionObservedRawHealth)
+			{
+				BeginLowHealthPrediction(InferredCriticalHealth, rawHealth);
+			}
+
+			return ResolveLowHealthPredictionDisplay(rawHealth, rawHealthChanged || lowHealthSignalChanged, InferredCriticalHealth);
+		}
+
+		if (rawHealth >= LowHealthRegenerationTarget)
+		{
+			if (isLowHealthPredictionActive)
+			{
+				int predictedHealth = PredictLowHealthFromElapsed();
+				bool naturalCriticalClear = predictedHealth >= LowHealthRegenerationTarget && !rawHealthChanged;
+				ResetLowHealthPrediction();
+				if (naturalCriticalClear)
 				{
-					suppressInitialStaleCriticalState = true;
-					suppressInitialStaleHealthState = true;
+					BeginNaturalRecoveredLowHealthHold(rawHealth);
+					return LowHealthRegenerationTarget;
 				}
 			}
-			else if (age > InitialStateStabilizationDelay)
-			{
-				hasCompletedInitialStateStabilization = true;
-			}
+
+			return rawHealth;
 		}
 
-		if ((suppressInitialStaleCriticalState || suppressInitialStaleHealthState)
-			&& (targetPlayer.isPlayerDead || (!rawCriticalState && rawHealth > 20)))
-		{
-			suppressInitialStaleCriticalState = false;
-			suppressInitialStaleHealthState = false;
-		}
+		ResetNaturalRecoveredLowHealthHold();
+		return ResolveLowHealthPredictionDisplay(rawHealth, rawHealthChanged || lowHealthSignalChanged, rawHealth);
 	}
 
-	private void ResetInitialStateStabilization()
+	private static bool ShouldInferVanillaCriticalHealth(int rawHealth, bool rawCriticalState, StatusBarConfig.CriticalHealthSyncMode criticalHealthMode)
 	{
-		initializedAtTime = Time.unscaledTime;
-		suppressInitialStaleCriticalState = false;
-		suppressInitialStaleHealthState = false;
-		hasCompletedInitialStateStabilization = false;
-		hasObservedStableNonCriticalState = false;
+		return criticalHealthMode == StatusBarConfig.CriticalHealthSyncMode.VanillaPrediction
+			&& rawCriticalState
+			&& rawHealth == LowHealthRegenerationTarget;
+	}
+
+	private int ResolveLowHealthPredictionDisplay(int rawHealth, bool restartLowHealthPrediction, int predictionStartHealth)
+	{
+		if (!isLowHealthPredictionActive || rawHealth != predictionObservedRawHealth || restartLowHealthPrediction)
+		{
+			BeginLowHealthPrediction(predictionStartHealth, rawHealth);
+		}
+
+		int predictedHealth = PredictLowHealthFromElapsed();
+		if (predictedHealth >= LowHealthRegenerationTarget && !restartLowHealthPrediction)
+		{
+			ResetLowHealthPrediction();
+			BeginNaturalRecoveredLowHealthHold(rawHealth);
+			return LowHealthRegenerationTarget;
+		}
+
+		return ResolvePredictedLowHealthDisplay();
+	}
+
+	private int ResolveSteppedHealthDisplay(int targetHealth)
+	{
+		if (!hasDisplayedHealth)
+		{
+			hasDisplayedHealth = true;
+			displayedHealth = targetHealth;
+			healthDisplayTarget = targetHealth;
+			nextHealthDisplayStepTime = Time.unscaledTime + HealthDisplayStepInterval;
+			return displayedHealth;
+		}
+
+		if (targetHealth == displayedHealth)
+		{
+			healthDisplayTarget = targetHealth;
+			return displayedHealth;
+		}
+
+		if (targetHealth != healthDisplayTarget)
+		{
+			healthDisplayTarget = targetHealth;
+			nextHealthDisplayStepTime = 0f;
+		}
+
+		if (Time.unscaledTime < nextHealthDisplayStepTime)
+		{
+			return displayedHealth;
+		}
+
+		displayedHealth += targetHealth > displayedHealth ? 1 : -1;
+		nextHealthDisplayStepTime = Time.unscaledTime + HealthDisplayStepInterval;
+		return displayedHealth;
+	}
+
+	private void BeginLowHealthPrediction(int displayHealth, int observedRawHealth)
+	{
+		isLowHealthPredictionActive = true;
+		predictionObservedRawHealth = observedRawHealth;
+		predictionStartHealth = displayHealth;
+		predictedLowHealth = displayHealth;
+		lowHealthPredictionStartTime = Time.time;
+	}
+
+	private int ResolvePredictedLowHealthDisplay()
+	{
+		return PredictLowHealthFromElapsed();
+	}
+
+	private int PredictLowHealthFromElapsed()
+	{
+		float elapsed = Time.time - lowHealthPredictionStartTime;
+		int regenerationSteps = Mathf.Max(0, Mathf.FloorToInt(elapsed / LowHealthRegenerationInterval));
+		predictedLowHealth = Mathf.Min(LowHealthRegenerationTarget, predictionStartHealth + regenerationSteps);
+		return predictedLowHealth;
+	}
+
+	private void BeginNaturalRecoveredLowHealthHold(int rawHealth)
+	{
+		holdNaturalRecoveredLowHealthDisplay = true;
+		naturalRecoveredRawHealth = rawHealth;
+	}
+
+	private void ResetLowHealthPrediction()
+	{
+		isLowHealthPredictionActive = false;
+		predictionObservedRawHealth = int.MinValue;
+		predictionStartHealth = int.MinValue;
+		predictedLowHealth = int.MinValue;
+		lowHealthPredictionStartTime = 0f;
+	}
+
+	private void ResetLowHealthSignals()
+	{
+		hasObservedDamageTimestamp = false;
+		lastObservedDamageTimestamp = 0f;
+		hasObservedRawCriticalState = false;
+		lastObservedRawCriticalState = false;
+	}
+
+	private void ResetDisplayedHealth()
+	{
+		hasDisplayedHealth = false;
+		displayedHealth = int.MinValue;
+		healthDisplayTarget = int.MinValue;
+		nextHealthDisplayStepTime = 0f;
+	}
+
+	private void ResetNaturalRecoveredLowHealthHold()
+	{
+		holdNaturalRecoveredLowHealthDisplay = false;
+		naturalRecoveredRawHealth = int.MinValue;
+	}
+
+	private int ResolveDisplayInfectionPercent(float rawMeter, bool hasInfectionValue)
+	{
+		if (!hasInfectionValue)
+		{
+			ResetInfectionPrediction();
+			ResetDisplayedInfectionPercent();
+			return 0;
+		}
+
+		rawMeter = Mathf.Clamp01(rawMeter);
+		float now = Time.unscaledTime;
+		if (!isInfectionPredictionActive)
+		{
+			BeginInfectionPrediction(rawMeter, 0f);
+			lastObservedInfectionMeter = rawMeter;
+			lastObservedInfectionSampleTime = now;
+			return ResolveSteppedInfectionPercent(MeterToInfectionPercent(rawMeter));
+		}
+
+		if (rawMeter < lastObservedInfectionMeter)
+		{
+			BeginInfectionPrediction(rawMeter, 0f);
+		}
+		else if (rawMeter > lastObservedInfectionMeter)
+		{
+			UpdateInfectionPredictionRate(rawMeter, now);
+		}
+
+		lastObservedInfectionMeter = rawMeter;
+		float displayMeter = PredictInfectionMeter();
+		int targetPercent = MeterToInfectionPercent(displayMeter);
+		return ResolveSteppedInfectionPercent(targetPercent);
+	}
+
+	private int ResolveSteppedInfectionPercent(int targetPercent)
+	{
+		if (!hasDisplayedInfectionPercent)
+		{
+			hasDisplayedInfectionPercent = true;
+			displayedInfectionPercent = targetPercent;
+			nextInfectionDisplayStepTime = Time.unscaledTime + InfectionDisplayStepInterval;
+			return displayedInfectionPercent;
+		}
+
+		if (targetPercent < displayedInfectionPercent)
+		{
+			displayedInfectionPercent = targetPercent;
+			nextInfectionDisplayStepTime = Time.unscaledTime + InfectionDisplayStepInterval;
+			return displayedInfectionPercent;
+		}
+
+		if (Time.unscaledTime < nextInfectionDisplayStepTime)
+		{
+			return displayedInfectionPercent;
+		}
+
+		displayedInfectionPercent = Mathf.Min(targetPercent, displayedInfectionPercent + 1);
+		nextInfectionDisplayStepTime = Time.unscaledTime + InfectionDisplayStepInterval;
+		return displayedInfectionPercent;
+	}
+
+	private void UpdateInfectionPredictionRate(float rawMeter, float now)
+	{
+		float elapsed = Mathf.Max(InfectionPredictionWindow, now - lastObservedInfectionSampleTime);
+		float rate = (rawMeter - lastObservedInfectionMeter) / elapsed;
+		BeginInfectionPrediction(rawMeter, rate);
+		lastObservedInfectionSampleTime = now;
+	}
+
+	private void BeginInfectionPrediction(float rawMeter, float rate)
+	{
+		isInfectionPredictionActive = true;
+		infectionPredictionStartMeter = rawMeter;
+		infectionPredictionStartTime = Time.unscaledTime;
+		infectionPredictionRate = rate;
+	}
+
+	private float PredictInfectionMeter()
+	{
+		float elapsed = Mathf.Min(Time.unscaledTime - infectionPredictionStartTime, InfectionPredictionWindow);
+		return Mathf.Clamp01(infectionPredictionStartMeter + infectionPredictionRate * elapsed);
+	}
+
+	private static int MeterToInfectionPercent(float meter)
+	{
+		float displayMeter = Mathf.Clamp01(meter);
+		int percent = Mathf.FloorToInt(displayMeter * 100f);
+		return Mathf.Clamp(percent, InfectionDisplayMinimumPercent, InfectionDisplayMaximumPercent);
+	}
+
+	private void ResetInfectionPrediction()
+	{
+		isInfectionPredictionActive = false;
+		lastObservedInfectionMeter = 0f;
+		lastObservedInfectionSampleTime = 0f;
+		infectionPredictionStartMeter = 0f;
+		infectionPredictionStartTime = 0f;
+		infectionPredictionRate = 0f;
+	}
+
+	private void ResetDisplayedInfectionPercent()
+	{
+		hasDisplayedInfectionPercent = false;
+		displayedInfectionPercent = int.MinValue;
+		nextInfectionDisplayStepTime = 0f;
 	}
 
 	private void ApplyCanvasScale(float uiScale)
@@ -335,21 +676,32 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 		lastAppliedUiScale = uiScale;
 	}
 
-	private void ApplyStripLayoutOffsets()
+	private void ApplyStripLayoutOffsets(StatusBarConfig settings)
 	{
-		float healthYOffset = Plugin.Settings.HealthBarYOffset;
+		float healthYOffset = settings.HealthBarYOffset;
 		if (!Mathf.Approximately(lastAppliedHealthBarYOffset, healthYOffset))
 		{
 			healthStripRect.anchoredPosition = new Vector2(0f, healthYOffset);
 			lastAppliedHealthBarYOffset = healthYOffset;
 		}
 
-		float infectionYOffset = Plugin.Settings.InfectionBarYOffset;
+		float infectionYOffset = settings.InfectionBarYOffset;
 		if (!Mathf.Approximately(lastAppliedInfectionBarYOffset, infectionYOffset))
 		{
 			infectionStripRect.anchoredPosition = new Vector2(0f, infectionYOffset);
 			lastAppliedInfectionBarYOffset = infectionYOffset;
 		}
+	}
+
+	private void SetBillboardRotation(Quaternion billboardRotation)
+	{
+		transform.rotation = billboardRotation;
+	}
+
+	private void ApplyStripsIfDirty(StatusBarConfig settings)
+	{
+		healthStrip.ApplyIfDirty(settings);
+		infectionStrip.ApplyIfDirty(settings);
 	}
 
 	private void SetCanvasEnabled(bool enabled)
@@ -374,6 +726,19 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 		lastAppliedCanvasCamera = viewCamera;
 	}
 
+	private void HideAll(StatusBarConfig settings, string reason, Camera? viewCamera, float distanceSqr)
+	{
+		LogDebugVisibility(reason, viewCamera, distanceSqr);
+		SetCanvasEnabled(false);
+		healthStrip.SetVisible(false);
+		infectionStrip.SetVisible(false);
+		wasHealthVisible = false;
+		wasInfectionVisible = false;
+		ResetInfectionPrediction();
+		ResetDisplayedInfectionPercent();
+		ApplyStripsIfDirty(settings);
+	}
+
 	private bool TryCreateStrip(string stripName, out PlayerStatusBarStrip strip)
 	{
 		strip = null!;
@@ -388,49 +753,11 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 		return true;
 	}
 
-	private bool ShouldShowForDistance(Camera? viewCamera, out float distance)
+	private bool ShouldShowForDistance(in PlayerStatusFrameContext context, out float distanceSqr)
 	{
-		float maxDistance = Plugin.Settings.MaxDistance;
-		float maxDistanceSqr = maxDistance * maxDistance;
-		Vector3 offset = ResolveObserverPosition(viewCamera) - targetPlayer.transform.position;
-		float distanceSqr = offset.sqrMagnitude;
-		distance = Mathf.Sqrt(distanceSqr);
-		return distanceSqr <= maxDistanceSqr;
-	}
-
-	private Vector3 ResolveObserverPosition(Camera? viewCamera)
-	{
-		if (viewCamera != null)
-		{
-			return viewCamera.transform.position;
-		}
-
-		if (localPlayer != null)
-		{
-			PlayerControllerB? spectatedPlayer = localPlayer.spectatedPlayerScript;
-			if (localPlayer.isPlayerDead && spectatedPlayer != null && !spectatedPlayer.isPlayerDead)
-			{
-				return spectatedPlayer.transform.position;
-			}
-		}
-
-		return localPlayer != null ? localPlayer.transform.position : targetPlayer.transform.position;
-	}
-
-	private bool ShouldShowGroup()
-	{
-		if (!Plugin.Settings.HideInOrbit)
-		{
-			return true;
-		}
-
-		StartOfRound? startOfRound = StartOfRound.Instance;
-		if (startOfRound == null)
-		{
-			return true;
-		}
-
-		return !PlayerStatusBarManager.ShouldSkipBarsForShipState(startOfRound);
+		Vector3 offset = context.ObserverPosition - targetPlayer.transform.position;
+		distanceSqr = offset.sqrMagnitude;
+		return distanceSqr <= context.MaxDistanceSqr;
 	}
 
 	private static Transform? ResolveAnchor(PlayerControllerB player)
@@ -448,7 +775,7 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 		return player.transform;
 	}
 
-	private void LogDebugVisibility(string state, Camera? viewCamera, float distance)
+	private void LogDebugVisibility(string state, Camera? viewCamera, float distanceSqr)
 	{
 		if (!Plugin.Settings.DebugLogging)
 		{
@@ -462,8 +789,13 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 
 		lastDebugVisibilityState = state;
 		nextDebugVisibilityLogTime = Time.unscaledTime + 5f;
-		string distanceText = distance >= 0f ? $"{distance:0.0}/{Plugin.Settings.MaxDistance:0.0}" : "n/a";
+		string distanceText = FormatDebugDistance(distanceSqr);
 		Plugin.LogDebug($"View playerId={PlayerId} name='{targetPlayer.playerUsername}' state={state} health={targetPlayer.health} controlled={targetPlayer.isPlayerControlled} dead={targetPlayer.isPlayerDead} distance={distanceText} canvasEnabled={worldCanvas.enabled} camera='{(viewCamera != null ? viewCamera.name : "none")}' anchor='{(anchor != null ? anchor.name : "none")}' position={FormatVector(transform.position)} target={FormatVector(targetPlayer.transform.position)}.");
+	}
+
+	private static string FormatDebugDistance(float distanceSqr)
+	{
+		return distanceSqr >= 0f ? $"{Mathf.Sqrt(distanceSqr):0.0}/{Plugin.Settings.MaxDistance:0.0}" : "n/a";
 	}
 
 	private static string FormatVector(Vector3 value)

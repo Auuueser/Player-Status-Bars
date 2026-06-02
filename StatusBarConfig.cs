@@ -1,6 +1,4 @@
 using System;
-using System.Collections.Generic;
-using System.Reflection;
 using BepInEx.Configuration;
 using UnityEngine;
 
@@ -12,6 +10,12 @@ internal sealed class StatusBarConfig
 	{
 		AlwaysVisible,
 		ShowOnlyWhenInfected
+	}
+
+	public enum CriticalHealthSyncMode
+	{
+		VanillaPrediction,
+		TrustRawHealthAt20
 	}
 
 	public enum ColorPreset
@@ -31,7 +35,11 @@ internal sealed class StatusBarConfig
 
 	public float MaxDistance => maxDistance.Value;
 
+	public float MaxDistanceSqr => maxDistanceSqr;
+
 	public float HeadOffset => headOffset.Value;
+
+	public float AnchorYOffset => anchorYOffset;
 
 	public float BarSpacing => barSpacing.Value;
 
@@ -50,6 +58,8 @@ internal sealed class StatusBarConfig
 	public bool DebugLogging => debugLogging.Value;
 
 	public InfectionBarDisplayMode InfectionDisplayMode => infectionDisplayMode.Value;
+
+	public CriticalHealthSyncMode CriticalHealthMode => criticalHealthMode.Value;
 
 	public int Revision { get; private set; }
 
@@ -76,6 +86,7 @@ internal sealed class StatusBarConfig
 		infectionColor = configFile.Bind("Colors", "Infection Bar Color", ColorPreset.Orange, "Fill color preset for the infection bar.");
 		backgroundColor = configFile.Bind("Colors", "Background Color", ColorPreset.Slate, "Background color preset for both bars.");
 		infectionDisplayMode = configFile.Bind("General", "Infection Bar Display Mode", InfectionBarDisplayMode.ShowOnlyWhenInfected, "Always show the infection bar, or only show it when infection is above zero.");
+		criticalHealthMode = configFile.Bind("Compatibility", "Critical Health Sync Mode", CriticalHealthSyncMode.VanillaPrediction, "VanillaPrediction infers 5 HP when remote vanilla clients expose critical state at stale 20 HP. TrustRawHealthAt20 keeps 20 HP for active-bleed or custom-injury mods.");
 		debugLogging = configFile.Bind("Debug", "Debug Logging", false, "Write throttled diagnostic logs for player status bar creation, filtering, visibility, and camera state.");
 
 		Subscribe(enabled);
@@ -92,29 +103,29 @@ internal sealed class StatusBarConfig
 		Subscribe(infectionColor);
 		Subscribe(backgroundColor);
 		Subscribe(infectionDisplayMode);
+		Subscribe(criticalHealthMode);
 		Subscribe(debugLogging);
+		UpdateCachedValues();
 	}
 
 	public Color GetHealthFillColor()
 	{
-		return ResolveColor(healthColor.Value, 0.95f);
+		return cachedHealthFillColor;
 	}
 
 	public Color GetInfectionFillColor()
 	{
-		return ResolveColor(infectionColor.Value, 0.95f);
+		return cachedInfectionFillColor;
 	}
 
 	public Color GetBackgroundColor()
 	{
-		return ResolveColor(backgroundColor.Value, 0.78f);
+		return cachedBackgroundColor;
 	}
 
 	public Color GetBorderColor()
 	{
-		Color background = GetBackgroundColor();
-		background.a = 1f;
-		return Color.Lerp(background, Color.white, 0.35f);
+		return cachedBorderColor;
 	}
 
 	private void Subscribe<T>(ConfigEntry<T> entry)
@@ -124,8 +135,23 @@ internal sealed class StatusBarConfig
 
 	private void NotifySettingsChanged()
 	{
+		UpdateCachedValues();
 		Revision++;
 		SettingsChanged?.Invoke();
+	}
+
+	private void UpdateCachedValues()
+	{
+		cachedHealthFillColor = ResolveColor(healthColor.Value, 0.95f);
+		cachedInfectionFillColor = ResolveColor(infectionColor.Value, 0.95f);
+		cachedBackgroundColor = ResolveColor(backgroundColor.Value, 0.78f);
+		cachedBorderColor = cachedBackgroundColor;
+		cachedBorderColor.a = 1f;
+		cachedBorderColor = Color.Lerp(cachedBorderColor, Color.white, 0.35f);
+
+		float distance = maxDistance.Value;
+		maxDistanceSqr = distance * distance;
+		anchorYOffset = headOffset.Value + barSpacing.Value * uiScale.Value;
 	}
 
 	private static Color ResolveColor(ColorPreset preset, float alpha)
@@ -145,111 +171,6 @@ internal sealed class StatusBarConfig
 
 		color.a = alpha;
 		return color;
-	}
-
-	public static class LethalConfigIntegration
-	{
-		public static void Register(StatusBarConfig config)
-		{
-			AddBool(config.enabled);
-			AddBool(config.hideInOrbit);
-			AddFloat(config.maxDistance, 2f, 80f);
-			AddFloat(config.headOffset, 0f, 2f);
-			AddFloat(config.barSpacing, 6f, 48f);
-			AddFloat(config.healthBarYOffset, -64f, 64f);
-			AddFloat(config.infectionBarYOffset, -64f, 64f);
-			AddFloat(config.uiScale, 0.003f, 0.05f);
-			AddBool(config.showHealthText);
-			AddBool(config.showInfectionText);
-			AddEnum(config.healthColor);
-			AddEnum(config.infectionColor);
-			AddEnum(config.backgroundColor);
-			AddEnum(config.infectionDisplayMode);
-			AddBool(config.debugLogging);
-		}
-
-		private static void AddBool(ConfigEntry<bool> entry)
-		{
-			AddConfigItem(CreateItem("LethalConfig.ConfigItems.BoolCheckBoxConfigItem", entry, CreateOptions("LethalConfig.ConfigItems.Options.BoolCheckBoxOptions",
-				("RequiresRestart", false))));
-		}
-
-		private static void AddFloat(ConfigEntry<float> entry, float min, float max)
-		{
-			AddConfigItem(CreateItem("LethalConfig.ConfigItems.FloatSliderConfigItem", entry, CreateOptions("LethalConfig.ConfigItems.Options.FloatSliderOptions",
-				("Min", min),
-				("Max", max),
-				("RequiresRestart", false))));
-		}
-
-		private static void AddEnum<T>(ConfigEntry<T> entry)
-		{
-			Type itemType = RequireType("LethalConfig.ConfigItems.EnumDropDownConfigItem`1").MakeGenericType(typeof(T));
-			AddConfigItem(CreateItem(itemType, entry, false));
-		}
-
-		private static object CreateOptions(string typeName, params (string Name, object Value)[] values)
-		{
-			object options = Activator.CreateInstance(RequireType(typeName)) ?? throw new InvalidOperationException($"Failed to create {typeName}.");
-			Type optionsType = options.GetType();
-			foreach ((string name, object value) in values)
-			{
-				PropertyInfo? property = optionsType.GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
-				if (property == null || !property.CanWrite)
-				{
-					throw new MissingMemberException(optionsType.FullName, name);
-				}
-
-				property.SetValue(options, value);
-			}
-
-			return options;
-		}
-
-		private static object CreateItem(string typeName, params object[] args)
-		{
-			return CreateItem(RequireType(typeName), args);
-		}
-
-		private static object CreateItem(Type type, params object[] args)
-		{
-			return Activator.CreateInstance(type, args) ?? throw new InvalidOperationException($"Failed to create {type.FullName}.");
-		}
-
-		private static void AddConfigItem(object configItem)
-		{
-			Type managerType = RequireType("LethalConfig.LethalConfigManager");
-			foreach (MethodInfo method in managerType.GetMethods(BindingFlags.Public | BindingFlags.Static))
-			{
-				ParameterInfo[] parameters = method.GetParameters();
-				if (method.Name == "AddConfigItem"
-					&& parameters.Length == 2
-					&& parameters[0].ParameterType.IsInstanceOfType(configItem)
-					&& parameters[1].ParameterType == typeof(Assembly))
-				{
-					method.Invoke(null, new object[] { configItem, Assembly.GetExecutingAssembly() });
-					return;
-				}
-			}
-
-			foreach (MethodInfo method in managerType.GetMethods(BindingFlags.Public | BindingFlags.Static))
-			{
-				ParameterInfo[] parameters = method.GetParameters();
-				if (method.Name == "AddConfigItem" && parameters.Length == 1 && parameters[0].ParameterType.IsInstanceOfType(configItem))
-				{
-					method.Invoke(null, new[] { configItem });
-					return;
-				}
-			}
-
-			throw new MissingMethodException(managerType.FullName, "AddConfigItem");
-		}
-
-		private static Type RequireType(string typeName)
-		{
-			return Type.GetType($"{typeName}, LethalConfig", false)
-				?? throw new TypeLoadException($"Could not find optional LethalConfig type '{typeName}'.");
-		}
 	}
 
 	private readonly ConfigEntry<bool> enabled;
@@ -280,5 +201,19 @@ internal sealed class StatusBarConfig
 
 	private readonly ConfigEntry<InfectionBarDisplayMode> infectionDisplayMode;
 
+	private readonly ConfigEntry<CriticalHealthSyncMode> criticalHealthMode;
+
 	private readonly ConfigEntry<bool> debugLogging;
+
+	private Color cachedHealthFillColor;
+
+	private Color cachedInfectionFillColor;
+
+	private Color cachedBackgroundColor;
+
+	private Color cachedBorderColor;
+
+	private float maxDistanceSqr;
+
+	private float anchorYOffset;
 }

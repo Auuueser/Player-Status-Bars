@@ -1,6 +1,8 @@
 # Player Status Bars
 
-Player Status Bars is a client-side BepInEx mod for Lethal Company. It displays compact world-space status bars above other players, showing health and Cadaver Growth infection state without requiring host, server, or other players to install the mod.
+Player Status Bars is a BepInEx mod for Lethal Company. It displays compact world-space status bars above other players, showing health and Cadaver Growth infection state with a low-overhead runtime model.
+
+The mod can run from a single client using locally readable game state. When the host and clients install the same version, it also uses a small status synchronization path to correct client-local infection values for other observers.
 
 The project is designed for low runtime overhead. Status bars are updated from a single manager, player discovery is sliced across refresh intervals, player views are pooled, UI writes are applied only when values change, and Cadaver Growth data is read through direct typed game state with a shared cache.
 
@@ -15,6 +17,7 @@ The project is designed for low runtime overhead. Status bars are updated from a
 - Hides bars during ship takeoff and round closing transitions.
 - Supports late-join and extended-lobby slot mappings without relying only on `isPlayerControlled`.
 - Reads Cadaver Growth infection values directly from `CadaverGrowthAI.playerInfections`.
+- Synchronizes client-local infection state through compact same-version status messages when multiple players have the mod installed.
 - Shows infection progress from 1% to 99% with one-percent display stepping.
 - Clears stale infection display state on cure, death, revive, and unavailable Cadaver Growth data.
 - Displays numeric health and highlights low health in red.
@@ -37,6 +40,7 @@ The runtime avoids expensive discovery and allocation patterns on the normal per
 - Text labels are prebuilt for common health and infection values.
 - UI graphics are marked dirty and applied only when display values or settings change.
 - Cadaver Growth lookup is cached and backs off while the enemy instance is absent.
+- Multiplayer status synchronization uses fixed-size payloads, slot-indexed caches, change-based client infection reports, and a throttled host snapshot cadence.
 
 ## Requirements
 
@@ -87,15 +91,26 @@ Most options apply at runtime through the generated configuration file.
 
 ## Compatibility Notes
 
-This is a pure client-side mod. It can only display values that the local client can read from synchronized game state. The mod does not add custom networking and does not synchronize hidden owner-only health values.
+The mod remains usable as a client-side display mod, but some remote values in Lethal Company can be stale or owner-local. When only one player installs the mod, display accuracy is limited to the game state that client can read. When the host and clients install the same version, the mod can exchange compact status messages to improve infection display consistency for observers.
 
 For health, the display combines synced raw health, synced critical or bleeding state, damage timestamp changes, and conservative vanilla recovery prediction. This improves common vanilla low-health cases while keeping a compatibility option for mods that intentionally set bleeding or injury states without changing health.
 
-For infection, the display depends on Cadaver Growth's `playerInfections` data. Mods that implement a separate infection system without updating Cadaver Growth state are outside the readable data surface of this client-side mod.
+For infection, the display depends on Cadaver Growth's `playerInfections` data. In multiplayer, same-version clients can report their locally accurate Cadaver Growth infection state to the host, which then reflects that state to other same-version observers. Mods that implement a separate infection system without updating Cadaver Growth state remain outside the readable data surface of this mod.
 
 ## Package Layout
 
-The Thunderstore package is intentionally minimal:
+Repository layout:
+
+```text
+src/
+  Runtime source files
+PlayerStatusBars.csproj
+README.md
+CHANGELOG.md
+LICENSE
+```
+
+Thunderstore package layout:
 
 ```text
 manifest.json

@@ -14,6 +14,14 @@ public sealed class Plugin : BaseUnityPlugin
 
 	private const string LegacyConfigFileName = "Codex.OtherPlayerStatusBars.cfg";
 
+	private const string LcChineseProjectGuid = "cn.codex.v81testchn";
+
+	private const string LcChineseProjectConfigFileName = "LC Chinese Project.cfg";
+
+	private const string LcChineseProjectPluginDirectoryName = "V81TestChn";
+
+	private const string LcChineseProjectPluginFileName = "V81TestChn.dll";
+
 	private static GameObject? runtimeObject;
 
 	private static PlayerStatusBarManager? runtimeManager;
@@ -24,12 +32,15 @@ public sealed class Plugin : BaseUnityPlugin
 
 	internal static bool UseChineseCriticalLabel { get; private set; }
 
+	internal static bool UseChineseConfigDescriptions { get; private set; }
+
 	private void Awake()
 	{
 		Log = Logger;
 		MigrateLegacyConfigFile();
-		Settings = StatusBarConfig.Create(Config);
-		UseChineseCriticalLabel = DetectChineseLocalizationMod();
+		UseChineseConfigDescriptions = DetectLcChineseProject();
+		UseChineseCriticalLabel = UseChineseConfigDescriptions;
+		Settings = StatusBarConfig.Create(Config, UseChineseConfigDescriptions);
 		EnsureRuntimeManager();
 		Config.Save();
 		Log.LogInfo("PlayerStatusBars loaded.");
@@ -103,33 +114,46 @@ public sealed class Plugin : BaseUnityPlugin
 		LogDebug("Runtime manager created.");
 	}
 
-	private static bool DetectChineseLocalizationMod()
+	private static bool DetectLcChineseProject()
 	{
 		foreach (PluginInfo pluginInfo in Chainloader.PluginInfos.Values)
 		{
 			string guid = pluginInfo.Metadata.GUID ?? string.Empty;
 			string name = pluginInfo.Metadata.Name ?? string.Empty;
 			string location = pluginInfo.Location ?? string.Empty;
-			if (LooksLikeChineseLocalization(guid) || LooksLikeChineseLocalization(name) || LooksLikeChineseLocalization(location))
+			if (IsLcChineseProjectGuid(guid)
+				|| LooksLikeLcChineseProject(name)
+				|| LooksLikeLcChineseProject(location))
 			{
 				return true;
 			}
 		}
 
+		if (File.Exists(Path.Combine(Paths.ConfigPath, LcChineseProjectConfigFileName)))
+		{
+			return true;
+		}
+
+		string pluginPath = Path.Combine(Paths.PluginPath, LcChineseProjectPluginDirectoryName, LcChineseProjectPluginFileName);
+		if (File.Exists(pluginPath))
+		{
+			return true;
+		}
+
 		return false;
 	}
 
-	private static bool LooksLikeChineseLocalization(string value)
+	private static bool IsLcChineseProjectGuid(string guid)
 	{
-		return Contains(value, "chinese")
-			|| Contains(value, "simplified_chinese")
-			|| Contains(value, "zh_cn")
-			|| Contains(value, "zh-cn")
-			|| Contains(value, "zh_hans")
-			|| Contains(value, "zh-hans")
-			|| Contains(value, "\u4e2d\u6587")
-			|| Contains(value, "\u6c49\u5316")
-			|| Contains(value, "FixGameTranslate");
+		return string.Equals(guid, LcChineseProjectGuid, StringComparison.OrdinalIgnoreCase);
+	}
+
+	private static bool LooksLikeLcChineseProject(string value)
+	{
+		return Contains(value, LcChineseProjectGuid)
+			|| Contains(value, "LC Chinese Project")
+			|| Contains(value, LcChineseProjectPluginDirectoryName)
+			|| Contains(value, LcChineseProjectPluginFileName);
 	}
 
 	private static bool Contains(string value, string term)

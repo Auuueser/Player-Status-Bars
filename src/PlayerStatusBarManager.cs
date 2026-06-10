@@ -19,6 +19,8 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 
 	private PlayerStatusBarView?[] trackedBarsBySlot = Array.Empty<PlayerStatusBarView?>();
 
+	private PlayerStatusBarView?[] activeBars = Array.Empty<PlayerStatusBarView?>();
+
 	private int activeBarCount;
 
 	private int activePlayerSlotCount;
@@ -48,12 +50,9 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 
 			LogDebugBlocked("disabled");
 			ClearBars();
+			PlayerStatusSnapshotSync.ClearSnapshots();
+			CadaverGrowthInfectionProvider.InvalidateAll();
 			ScheduleNextRefresh(hasActiveBars: false);
-			return;
-		}
-
-		if (activeBarCount == 0 && Time.unscaledTime < nextRefreshTime)
-		{
 			return;
 		}
 
@@ -69,6 +68,8 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 				ScheduleNextRefresh(hasActiveBars: false);
 				LogDebugBlocked($"not-ready startOfRound={startOfRound != null} localPlayer={localPlayer != null} allPlayers={allPlayers != null}");
 				ClearBars();
+				PlayerStatusSnapshotSync.ClearSnapshots();
+				CadaverGrowthInfectionProvider.InvalidateAll();
 			}
 
 			return;
@@ -80,11 +81,20 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 		{
 			if (Time.unscaledTime >= nextRefreshTime)
 			{
-				LogDebugBlocked($"orbit-hidden inShipPhase={startOfRound.inShipPhase} shipHasLanded={startOfRound.shipHasLanded} shipDoorsEnabled={startOfRound.shipDoorsEnabled} shipIsLeaving={startOfRound.shipIsLeaving} dayStarted={TimeOfDay.Instance?.currentDayTimeStarted}");
+				LogDebugBlocked(
+					$"orbit-hidden inShipPhase={startOfRound.inShipPhase} shipHasLanded={startOfRound.shipHasLanded} shipDoorsEnabled={startOfRound.shipDoorsEnabled} shipIsLeaving={startOfRound.shipIsLeaving} dayStarted={TimeOfDay.Instance?.currentDayTimeStarted}");
 			}
 
 			ClearBars();
+			PlayerStatusSnapshotSync.ClearSnapshots();
+			CadaverGrowthInfectionProvider.InvalidateAll();
 			ScheduleNextRefresh(hasActiveBars: false);
+			return;
+		}
+
+		PlayerStatusSnapshotSync.Tick(startOfRound, allPlayers);
+		if (activeBarCount == 0 && Time.unscaledTime < nextRefreshTime)
+		{
 			return;
 		}
 
@@ -133,8 +143,9 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 				continue;
 			}
 
+			int playerKey = ResolvePlayerKey(player, slot, allPlayers);
 			PlayerStatusBarView? existingView = trackedBarsBySlot[slot];
-			if (existingView != null && existingView.IsStillValid(localPlayer) && existingView.PlayerId == ResolvePlayerKey(player, slot, allPlayers))
+			if (existingView != null && existingView.MatchesPlayer(player, localPlayer, playerKey))
 			{
 				continue;
 			}
@@ -144,7 +155,6 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 				RemoveBar(slot);
 			}
 
-			int playerKey = ResolvePlayerKey(player, slot, allPlayers);
 			PlayerStatusBarView? view = RentBarView(playerKey, player);
 			if (view == null)
 			{
@@ -153,9 +163,9 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 			}
 
 			trackedBarsBySlot[slot] = view;
-			activeBarCount++;
+			AddActiveBar(view);
 			createdCount++;
-			Plugin.LogDebug($"Created bar playerKey={playerKey} slot={slot} clientId={player.playerClientId} name='{player.playerUsername}' health={player.health} active={player.gameObject.activeInHierarchy}.");
+			Plugin.LogDebug($"Created bar playerKey={playerKey} slot={slot} clientId={player.playerClientId} actualClientId={player.actualClientId} name='{player.playerUsername}' health={player.health} active={player.gameObject.activeInHierarchy}.");
 		}
 
 		LogDebugSummary(startOfRound, localPlayer, allPlayers.Length, createdCount, existingCount, skippedCount);
@@ -214,14 +224,14 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 			view = pooledBars.Pop();
 			view.transform.SetParent(transform, worldPositionStays: false);
 			view.name = $"OtherPlayerStatusBar_{playerKey}";
-			view.Bind(player);
+			view.Bind(player, playerKey);
 			return view;
 		}
 
 		GameObject viewObject = new($"OtherPlayerStatusBar_{playerKey}");
 		viewObject.transform.SetParent(transform, worldPositionStays: false);
 		view = viewObject.AddComponent<PlayerStatusBarView>();
-		if (view.Initialize(player))
+		if (view.Initialize(player, playerKey))
 		{
 			return view;
 		}
@@ -239,14 +249,54 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 
 	private void TickTrackedBars(in PlayerStatusFrameContext frameContext)
 	{
-		for (int i = 0; i < activePlayerSlotCount; i++)
+		for (int i = 0; i < activeBarCount; i++)
 		{
-			PlayerStatusBarView? view = trackedBarsBySlot[i];
+			PlayerStatusBarView? view = activeBars[i];
 			if (view != null)
 			{
 				view.Tick(frameContext);
 			}
 		}
+	}
+
+	private void AddActiveBar(PlayerStatusBarView view)
+	{
+		EnsureActiveBarCapacity(activeBarCount + 1);
+		activeBars[activeBarCount] = view;
+		activeBarCount++;
+	}
+
+	private void RemoveActiveBar(PlayerStatusBarView view)
+	{
+		for (int i = 0; i < activeBarCount; i++)
+		{
+			if (activeBars[i] != view)
+			{
+				continue;
+			}
+
+			int lastIndex = activeBarCount - 1;
+			activeBars[i] = activeBars[lastIndex];
+			activeBars[lastIndex] = null;
+			activeBarCount = lastIndex;
+			return;
+		}
+	}
+
+	private void EnsureActiveBarCapacity(int requiredCapacity)
+	{
+		if (activeBars.Length >= requiredCapacity)
+		{
+			return;
+		}
+
+		PlayerStatusBarView?[] resizedBars = new PlayerStatusBarView?[GrowSlotCapacity(requiredCapacity)];
+		if (activeBarCount > 0)
+		{
+			Array.Copy(activeBars, resizedBars, activeBarCount);
+		}
+
+		activeBars = resizedBars;
 	}
 
 	private static PlayerStatusFrameContext CreateFrameContext(StatusBarConfig settings, PlayerControllerB localPlayer, bool canShowGroup)
@@ -302,12 +352,6 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 			return false;
 		}
 
-		if (player.disconnectedMidGame)
-		{
-			skipReason = "disconnected";
-			return false;
-		}
-
 		if (!player.gameObject.activeInHierarchy)
 		{
 			skipReason = "inactive-gameobject";
@@ -327,12 +371,12 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 
 	private static bool IsConnectedPlayerSlot(StartOfRound startOfRound, PlayerControllerB player, int playerKey)
 	{
-		if (player.isPlayerControlled)
+		if (startOfRound.ClientPlayerList.TryGetValue(player.actualClientId, out int mappedSlot))
 		{
-			return true;
+			return mappedSlot == playerKey;
 		}
 
-		return startOfRound.ClientPlayerList.TryGetValue(player.actualClientId, out int mappedSlot) && mappedSlot == playerKey;
+		return player.isPlayerControlled && !player.disconnectedMidGame;
 	}
 
 	private static int ResolvePlayerKey(PlayerControllerB player, int slotIndex, PlayerControllerB[] allPlayers)
@@ -363,11 +407,6 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 			return false;
 		}
 
-		if (startOfRound.shipDoorsEnabled)
-		{
-			return false;
-		}
-
 		return startOfRound.inShipPhase && !startOfRound.shipHasLanded;
 	}
 
@@ -385,7 +424,7 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 		}
 
 		trackedBarsBySlot[playerId] = null;
-		activeBarCount--;
+		RemoveActiveBar(view);
 		if (view != null)
 		{
 			ReleaseBarView(view);
@@ -406,9 +445,11 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 			}
 		}
 
+		Array.Clear(activeBars, 0, activeBarCount);
 		activeBarCount = 0;
 		if (clearedCount > 0)
 		{
+			CadaverGrowthInfectionProvider.InvalidateAll();
 			Plugin.LogDebug($"Cleared all bars count={clearedCount}.");
 		}
 	}
@@ -424,6 +465,8 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 	private void OnDestroy()
 	{
 		Plugin.LogDebug($"Runtime manager destroyed tracked={activeBarCount}.");
+		PlayerStatusSnapshotSync.ClearSnapshots();
+		CadaverGrowthInfectionProvider.InvalidateAll();
 		DestroyAllBars();
 	}
 
@@ -439,6 +482,7 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 		}
 
 		trackedBarsBySlot = Array.Empty<PlayerStatusBarView?>();
+		activeBars = Array.Empty<PlayerStatusBarView?>();
 		activeBarCount = 0;
 		while (pooledBars.Count > 0)
 		{

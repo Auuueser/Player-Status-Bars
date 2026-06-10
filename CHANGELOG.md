@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here.
 
+## 0.2.1
+
+- Added compact same-version status synchronization so client-local Cadaver Growth infection state can be reported to the host and reflected for other observers.
+- Improved host-side infection display when the observed player's infection meter is only accurate on that player's own client.
+- Improved infection state handling by distinguishing unknown, confirmed clear, and active infection values, reducing stale infection bars after cure, death, revive, and round changes.
+- Improved late-join and round-transition cleanup by clearing status snapshots and infection caches when bars are disabled, hidden in orbit, or waiting for game state.
+- Kept the synchronization path low-overhead with fixed-size payloads, slot-indexed caches, change-based client reports, and the existing throttled host snapshot cadence.
+
 ## 0.2.0
 
 - Changed the project license from MIT to the GNU General Public License v3.0.

@@ -43,9 +43,12 @@
     <Reference Include="Unity.Netcode.Runtime">
       <HintPath>$(ManagedDir)\Unity.Netcode.Runtime.dll</HintPath>
     </Reference>
+    <Reference Include="Unity.Collections">
+      <HintPath>$(ManagedDir)\Unity.Collections.dll</HintPath>
+    </Reference>
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Remove="obj\**;tmpobj\**;tmpbin\**;tmpbin_sync\**;tmpbin_sync2\**;tests\**" />
+    <Compile Remove="obj\**;tmpobj\**;tmpbin\**;tmpbin_sync\**;tmpbin_sync2\**" />
   </ItemGroup>
 </Project>

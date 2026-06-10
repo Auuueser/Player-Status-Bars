@@ -27,6 +27,10 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 
 	private Transform? anchor;
 
+	private ulong boundActualClientId = ulong.MaxValue;
+
+	private int boundPlayerKey = -1;
+
 	private PlayerStatusBarStrip healthStrip = null!;
 
 	private PlayerStatusBarStrip infectionStrip = null!;
@@ -83,6 +87,14 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 
 	private bool hasDisplayedInfectionPercent;
 
+	private bool wasUsingSnapshot;
+
+	private bool lastDebugRawCriticalState;
+
+	private bool lastDebugDamageSignalChanged;
+
+	private bool lastDebugCriticalSignalChanged;
+
 	private int lastObservedRawHealth = int.MinValue;
 
 	private int predictionObservedRawHealth = int.MinValue;
@@ -98,6 +110,12 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 	private int naturalRecoveredRawHealth = int.MinValue;
 
 	private int displayedInfectionPercent = int.MinValue;
+
+	private int lastDebugRawHealth = int.MinValue;
+
+	private int lastDebugDisplayHealthTarget = int.MinValue;
+
+	private int lastDebugDisplayedHealth = int.MinValue;
 
 	private float lowHealthPredictionStartTime;
 
@@ -117,9 +135,9 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 
 	private float nextInfectionDisplayStepTime;
 
-	public int PlayerId => targetPlayer != null ? (int)targetPlayer.playerClientId : -1;
+	public int PlayerId => boundPlayerKey >= 0 ? boundPlayerKey : targetPlayer != null ? (int)targetPlayer.playerClientId : -1;
 
-	public bool Initialize(PlayerControllerB player)
+	public bool Initialize(PlayerControllerB player, int playerKey)
 	{
 		worldCanvas = gameObject.AddComponent<Canvas>();
 		worldCanvas.renderMode = RenderMode.WorldSpace;
@@ -140,13 +158,15 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 		}
 		infectionStripRect = infectionStrip.GetComponent<RectTransform>();
 
-		Bind(player);
+		Bind(player, playerKey);
 		return true;
 	}
 
-	internal void Bind(PlayerControllerB player)
+	internal void Bind(PlayerControllerB player, int playerKey)
 	{
 		targetPlayer = player;
+		boundPlayerKey = playerKey;
+		boundActualClientId = player.actualClientId;
 		anchor = ResolveAnchor(player);
 		ResetRuntimeState();
 		name = $"PlayerStatusBar_{player.playerClientId}";
@@ -172,6 +192,8 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 
 		targetPlayer = null!;
 		anchor = null;
+		boundPlayerKey = -1;
+		boundActualClientId = ulong.MaxValue;
 		ResetRuntimeState();
 		gameObject.SetActive(false);
 	}
@@ -191,6 +213,14 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 		return !targetPlayer.disconnectedMidGame && targetPlayer.gameObject.activeInHierarchy;
 	}
 
+	public bool MatchesPlayer(PlayerControllerB player, PlayerControllerB localPlayer, int playerKey)
+	{
+		return IsStillValid(localPlayer)
+			&& targetPlayer == player
+			&& boundPlayerKey == playerKey
+			&& boundActualClientId == player.actualClientId;
+	}
+
 	internal void Tick(in PlayerStatusFrameContext context)
 	{
 		if (targetPlayer == null)
@@ -205,9 +235,13 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 			return;
 		}
 
-		bool targetIsDead = targetPlayer.isPlayerDead || targetPlayer.health <= 0;
+		bool hasSyncedSnapshot = PlayerStatusSnapshotSync.TryGetSnapshot(targetPlayer, out PlayerStatusSnapshot syncedSnapshot);
+		HandleSnapshotSourceTransition(hasSyncedSnapshot);
+		bool targetIsDead = hasSyncedSnapshot
+			? syncedSnapshot.IsDead || syncedSnapshot.Health <= 0
+			: targetPlayer.isPlayerDead || targetPlayer.health <= 0;
 		HandleDeathStateTransition(targetIsDead);
-		bool targetReady = IsTargetReadyForDisplay();
+		bool targetReady = IsTargetReadyForDisplay(targetIsDead);
 		if (!targetReady)
 		{
 			HideAll(settings, "target-not-ready", context.ViewCamera, -1f);
@@ -224,18 +258,29 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 		ApplyCanvasCamera(context.ViewCamera);
 		ApplyCanvasScale(context.UiScale);
 		bool isWithinDisplayDistance = ShouldShowForDistance(context, out float displayDistanceSqr);
-		ApplyStripLayoutOffsets(settings);
+		if (!isWithinDisplayDistance)
+		{
+			HideForDistance(context.ViewCamera, displayDistanceSqr);
+			return;
+		}
 
-		int rawHealth = Mathf.Clamp(targetPlayer.health, 0, 100);
-		bool rawCriticalState = targetPlayer.criticallyInjured || targetPlayer.bleedingHeavily;
+		int rawHealth = hasSyncedSnapshot ? Mathf.Clamp(syncedSnapshot.Health, 0, 100) : Mathf.Clamp(targetPlayer.health, 0, 100);
+		bool rawCriticalState = hasSyncedSnapshot ? syncedSnapshot.IsCritical : targetPlayer.criticallyInjured || targetPlayer.bleedingHeavily;
 		bool damageSignalChanged = ResolveDamageSignalChanged(targetPlayer.timeSinceTakingDamage);
 		bool criticalSignalChanged = ResolveCriticalSignalChanged(rawCriticalState);
 		bool lowHealthSignalChanged = damageSignalChanged || criticalSignalChanged;
 		int displayHealthTarget = ResolveDisplayHealth(rawHealth, rawCriticalState, lowHealthSignalChanged, settings.CriticalHealthMode);
 		int displayHealth = ResolveSteppedHealthDisplay(displayHealthTarget);
+		lastDebugRawHealth = rawHealth;
+		lastDebugDisplayHealthTarget = displayHealthTarget;
+		lastDebugDisplayedHealth = displayHealth;
+		lastDebugRawCriticalState = rawCriticalState;
+		lastDebugDamageSignalChanged = damageSignalChanged;
+		lastDebugCriticalSignalChanged = criticalSignalChanged;
 
-		bool showHealth = isWithinDisplayDistance;
-		LogDebugVisibility(showHealth ? "visible" : "distance-hidden", context.ViewCamera, displayDistanceSqr);
+		ApplyStripLayoutOffsets(settings);
+		bool showHealth = true;
+		LogDebugVisibility("visible", context.ViewCamera, displayDistanceSqr);
 		bool showCriticalHealthBar = displayHealthTarget < LowHealthRegenerationTarget || displayHealth < LowHealthRegenerationTarget;
 		healthStrip.SetFillColorOverride(showCriticalHealthBar, CriticalHealthBarColor);
 		if (showHealth && (!wasHealthVisible || displayHealth != lastDisplayedHealth || lastDisplayedHealthLabel != "HP"))
@@ -249,9 +294,18 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 
 		float infectionMeter = 0f;
 		bool hasInfectionValue = false;
-		if (isWithinDisplayDistance)
+		if (hasSyncedSnapshot && syncedSnapshot.IsInfectionKnown)
 		{
-			hasInfectionValue = CadaverGrowthInfectionProvider.TryGetNormalizedInfection(targetPlayer, out infectionMeter);
+			hasInfectionValue = syncedSnapshot.HasInfection;
+			infectionMeter = syncedSnapshot.InfectionMeter;
+		}
+		else
+		{
+			bool hasReportedInfectionState = PlayerStatusSnapshotSync.TryGetReportedInfection(targetPlayer, boundPlayerKey, out hasInfectionValue, out infectionMeter);
+			if (!hasReportedInfectionState && isWithinDisplayDistance)
+			{
+				hasInfectionValue = CadaverGrowthInfectionProvider.TryGetNormalizedInfection(targetPlayer, boundPlayerKey, out infectionMeter);
+			}
 		}
 
 		bool showInfection = settings.InfectionDisplayMode == StatusBarConfig.InfectionBarDisplayMode.AlwaysVisible
@@ -274,18 +328,40 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 			infectionStrip.SetVisible(false);
 			wasInfectionVisible = false;
 			ResetInfectionPrediction();
+			ResetDisplayedInfectionPercent();
+			lastDisplayedInfectionPercent = int.MinValue;
 		}
 
 		SetCanvasEnabled(showHealth || showInfection);
 		ApplyStripsIfDirty(settings);
 	}
 
-	private bool IsTargetReadyForDisplay()
+	private void HideForDistance(Camera? viewCamera, float distanceSqr)
+	{
+		LogDebugVisibility("distance-hidden", viewCamera, distanceSqr);
+		SetCanvasEnabled(false);
+		healthStrip.SetVisible(false);
+		infectionStrip.SetVisible(false);
+		if (wasHealthVisible)
+		{
+			ResetDisplayedHealth();
+		}
+
+		if (wasInfectionVisible)
+		{
+			ResetInfectionPrediction();
+			ResetDisplayedInfectionPercent();
+		}
+
+		wasHealthVisible = false;
+		wasInfectionVisible = false;
+	}
+
+	private bool IsTargetReadyForDisplay(bool targetIsDead)
 	{
 		return targetPlayer != null
 			&& !targetPlayer.disconnectedMidGame
-			&& !targetPlayer.isPlayerDead
-			&& targetPlayer.health > 0
+			&& !targetIsDead
 			&& targetPlayer.gameObject.activeInHierarchy;
 	}
 
@@ -304,6 +380,27 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 		lastAppliedInfectionBarYOffset = float.NaN;
 		wasTargetDead = false;
 		hasObservedRawHealth = false;
+		ResetLowHealthSignals();
+		ResetLowHealthPrediction();
+		ResetNaturalRecoveredLowHealthHold();
+		ResetDisplayedHealth();
+		ResetDebugHealthDecisionState();
+		ResetInfectionPrediction();
+		ResetDisplayedInfectionPercent();
+		wasUsingSnapshot = false;
+	}
+
+	private void HandleSnapshotSourceTransition(bool hasSyncedSnapshot)
+	{
+		if (wasUsingSnapshot == hasSyncedSnapshot)
+		{
+			return;
+		}
+
+		wasUsingSnapshot = hasSyncedSnapshot;
+		lastDisplayedHealth = int.MinValue;
+		lastDisplayedHealthLabel = string.Empty;
+		lastDisplayedInfectionPercent = int.MinValue;
 		ResetLowHealthSignals();
 		ResetLowHealthPrediction();
 		ResetNaturalRecoveredLowHealthHold();
@@ -552,6 +649,16 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 		nextHealthDisplayStepTime = 0f;
 	}
 
+	private void ResetDebugHealthDecisionState()
+	{
+		lastDebugRawHealth = int.MinValue;
+		lastDebugDisplayHealthTarget = int.MinValue;
+		lastDebugDisplayedHealth = int.MinValue;
+		lastDebugRawCriticalState = false;
+		lastDebugDamageSignalChanged = false;
+		lastDebugCriticalSignalChanged = false;
+	}
+
 	private void ResetNaturalRecoveredLowHealthHold()
 	{
 		holdNaturalRecoveredLowHealthDisplay = false;
@@ -662,6 +769,7 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 	{
 		hasDisplayedInfectionPercent = false;
 		displayedInfectionPercent = int.MinValue;
+		lastDisplayedInfectionPercent = int.MinValue;
 		nextInfectionDisplayStepTime = 0f;
 	}
 
@@ -790,7 +898,7 @@ internal sealed class PlayerStatusBarView : MonoBehaviour
 		lastDebugVisibilityState = state;
 		nextDebugVisibilityLogTime = Time.unscaledTime + 5f;
 		string distanceText = FormatDebugDistance(distanceSqr);
-		Plugin.LogDebug($"View playerId={PlayerId} name='{targetPlayer.playerUsername}' state={state} health={targetPlayer.health} controlled={targetPlayer.isPlayerControlled} dead={targetPlayer.isPlayerDead} distance={distanceText} canvasEnabled={worldCanvas.enabled} camera='{(viewCamera != null ? viewCamera.name : "none")}' anchor='{(anchor != null ? anchor.name : "none")}' position={FormatVector(transform.position)} target={FormatVector(targetPlayer.transform.position)}.");
+		Plugin.LogDebug($"View playerId={PlayerId} clientId={targetPlayer.playerClientId} actualClientId={targetPlayer.actualClientId} boundActualClientId={boundActualClientId} snapshot={wasUsingSnapshot} name='{targetPlayer.playerUsername}' state={state} health={targetPlayer.health} rawHealth={lastDebugRawHealth} displayHealthTarget={lastDebugDisplayHealthTarget} displayHealth={lastDebugDisplayedHealth} rawCritical={lastDebugRawCriticalState} damageSignalChanged={lastDebugDamageSignalChanged} criticalSignalChanged={lastDebugCriticalSignalChanged} predictionActive={isLowHealthPredictionActive} naturalHold={holdNaturalRecoveredLowHealthDisplay} controlled={targetPlayer.isPlayerControlled} dead={targetPlayer.isPlayerDead} distance={distanceText} canvasEnabled={worldCanvas.enabled} camera='{(viewCamera != null ? viewCamera.name : "none")}' anchor='{(anchor != null ? anchor.name : "none")}' position={FormatVector(transform.position)} target={FormatVector(targetPlayer.transform.position)}.");
 	}
 
 	private static string FormatDebugDistance(float distanceSqr)

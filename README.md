@@ -1,133 +1,100 @@
-# Player Status Bars
+<h1 align="center">Player Status Bars</h1>
 
-Player Status Bars is a BepInEx mod for Lethal Company. It displays compact world-space status bars above other players, showing health and Cadaver Growth infection state with a low-overhead runtime model.
+<p align="center">
+  <a href="https://github.com/Auuueser/Player-Status-Bars/releases"><img alt="版本 0.3.0" src="https://img.shields.io/badge/版本-0.3.0-E35B18?style=flat-square&labelColor=24282C" height="22"></a>
+  <a href="https://store.steampowered.com/app/1966720/Lethal_Company/"><img alt="游戏版本 V81" src="https://img.shields.io/badge/游戏版本-V81-E35B18?style=flat-square&labelColor=24282C" height="22"></a>
+  <a href="https://github.com/BepInEx/BepInEx"><img alt="BepInEx 5" src="https://img.shields.io/badge/BepInEx-5-526D82?style=flat-square&labelColor=24282C" height="22"></a>
+  <a href="LICENSE"><img alt="许可 GPL-3.0" src="https://img.shields.io/badge/许可-GPL--3.0-E35B18?style=flat-square&labelColor=24282C" height="22"></a>
+</p>
 
-The mod can run from a single client using locally readable game state. When the host and clients install the same version, it also uses a small status synchronization path to correct client-local infection values for other observers.
+<p align="center">
+  <a href="https://github.com/Auuueser/Player-Status-Bars/releases"><img alt="下载 Download" src="https://img.shields.io/badge/下载-Download-E35B18?style=flat-square&labelColor=24282C" height="22"></a>
+  <a href="https://github.com/Auuueser/Player-Status-Bars/issues"><img alt="反馈 Issue" src="https://img.shields.io/badge/反馈-Issue-C84C2F?style=flat-square&labelColor=24282C" height="22"></a>
+  <a href="CHANGELOG.md"><img alt="更新日志 Changelog" src="https://img.shields.io/badge/更新日志-Changelog-526D82?style=flat-square&labelColor=24282C" height="22"></a>
+</p>
 
-The project is designed for low runtime overhead. Status bars are updated from a single manager, player discovery is sliced across refresh intervals, player views are pooled, UI writes are applied only when values change, and Cadaver Growth data is read through direct typed game state with a shared cache.
+<details>
+<summary><strong>中文</strong></summary>
 
-## Features
+### 预览
 
-- Displays health and infection bars above other players.
-- Excludes the local player.
-- Uses a world-space UI that follows players and faces the active camera.
-- Supports the active gameplay camera, spectator camera, and freecam camera as visibility references.
-- Hides bars by distance and, by default, while the ship is still in orbit.
-- Keeps connected players tracked while dead so revive state can reset cleanly.
-- Hides bars during ship takeoff and round closing transitions.
-- Supports late-join and extended-lobby slot mappings without relying only on `isPlayerControlled`.
-- Reads Cadaver Growth infection values directly from `CadaverGrowthAI.playerInfections`.
-- Synchronizes client-local infection state through compact same-version status messages when multiple players have the mod installed.
-- Shows infection progress from 1% to 99% with one-percent display stepping.
-- Clears stale infection display state on cure, death, revive, and unavailable Cadaver Growth data.
-- Displays numeric health and highlights low health in red.
-- Smoothly steps health display one point at a time toward the current target.
-- Predicts vanilla low-health recovery toward 20 HP when remote clients expose stale low-health values.
-- Includes a compatibility mode for 20 HP critical-state synchronization.
-- Provides BepInEx configuration for layout, distance, text, colors, infection visibility, compatibility behavior, and debug logging.
+<table width="100%">
+  <tr><th>十格样式（默认）</th><th>经典样式</th></tr>
+  <tr>
+    <td width="50%"><img src="docs/media/preview-segmented.gif" alt="十格样式：血量和感染值的增减" width="100%"></td>
+    <td width="50%"><img src="docs/media/preview-classic.gif" alt="经典样式：血量和感染值的增减" width="100%"></td>
+  </tr>
+</table>
 
-## Performance Model
+### 常用配置
 
-The runtime avoids expensive discovery and allocation patterns on the normal per-frame path:
+| 配置 | 默认值 | 说明 |
+|:--|:--|:--|
+| `Bar Style` | `Segmented` | `Segmented` 十格样式，`Classic` 经典样式 |
+| `Show Infection Bars` | `true` | 主机设置，决定整个房间是否显示感染条 |
+| `Max Display Distance` | `18` | 最大显示距离 |
+| `Hide In Orbit` | `true` | 飞船在轨道时隐藏 |
+| `Show Text` | `true` | 显示血量数字和感染百分比 |
 
-- No runtime reflection, `GetType` field access, or object-wide Unity searches are used by production code.
-- One persistent manager ticks active bars instead of adding independent per-bar update components.
-- Player refresh work is sliced across a small number of slots per refresh.
-- Tracked players use slot-indexed arrays rather than hash collections.
-- Status bar views are pooled and reused.
-- Distance checks use squared distance on the hot path.
-- Settings that are used every frame are cached when configuration changes.
-- Text labels are prebuilt for common health and infection values.
-- UI graphics are marked dirty and applied only when display values or settings change.
-- Cadaver Growth lookup is cached and backs off while the enemy instance is absent.
-- Multiplayer status synchronization uses fixed-size payloads, slot-indexed caches, change-based client infection reports, and a throttled host snapshot cadence.
+配置保存在 `BepInEx/config/playerstatusbars.cfg`，修改后立即生效。
 
-## Requirements
+### 安装
 
-- Lethal Company
-- BepInEx 5
-- Cadaver Growth is optional. If it is not present, health display remains available and infection values are safely unavailable.
+通过 **r2modman / Thunderstore Mod Manager** 安装，需要 **BepInExPack 5.4.2100**。手动安装时，将 `PlayerStatusBars.dll` 放入 `BepInEx/plugins/PlayerStatusBars/`。
 
-## Installation
+### 多人
 
-1. Build or download `PlayerStatusBars.dll`.
-2. Place the DLL in the target profile's `BepInEx/plugins/PlayerStatusBars` folder.
-3. Start the game once to generate `BepInEx/config/playerstatusbars.cfg`.
-4. Adjust settings through the generated configuration file as needed.
+- **血条**：本地安装即可使用；主机和对方也安装时，血量更准确。
+- **感染条**：需要主机安装 Player Status Bars 并开启 `Show Infection Bars`。
 
-## Build
+### 兼容
 
-The project references game and BepInEx assemblies from a local Lethal Company installation. The project file exposes MSBuild properties so local paths do not need to be committed.
+- [LC_Chinese_Project](https://thunderstore.io/c/lethal-company/p/Aueser/LC_Chinese_Project/)：自动使用中文配置与说明。
+- [LethalConfig](https://thunderstore.io/c/lethal-company/p/AinaVT/LethalConfig/)：在游戏内修改配置，立即生效。
 
-Example:
+遇到问题请在 [Issues](https://github.com/Auuueser/Player-Status-Bars/issues) 附上复现步骤、模组列表及 `BepInEx/LogOutput.log`。项目采用 [GPL-3.0](LICENSE) 许可。
 
-```powershell
-dotnet build PlayerStatusBars.csproj -c Release `
-  -p:LethalCompanyDir="D:\Steam\steamapps\common\Lethal Company" `
-  -p:BepInExDir="D:\path\to\profile\BepInEx"
-```
+</details>
 
-The compiled DLL is emitted under `bin/Release/netstandard2.1`.
+<details>
+<summary><strong>English</strong></summary>
 
-## Configuration
+### Preview
 
-The generated BepInEx config file is `BepInEx/config/playerstatusbars.cfg`.
+<table width="100%">
+  <tr><th>Segmented (default)</th><th>Classic</th></tr>
+  <tr>
+    <td width="50%"><img src="docs/media/preview-segmented.gif" alt="Segmented style: health and infection rising and falling" width="100%"></td>
+    <td width="50%"><img src="docs/media/preview-classic.gif" alt="Classic style: health and infection rising and falling" width="100%"></td>
+  </tr>
+</table>
 
-Available settings include:
+### Common settings
 
-- Enable or disable the mod.
-- Maximum display distance.
-- Hide status bars while the ship is in orbit.
-- Head offset, UI scale, and per-bar Y offsets.
-- Health and infection text visibility.
-- Health, infection, and background color presets.
-- Infection bar display mode: always visible or only visible when infected.
-- Critical health sync mode:
-  - `VanillaPrediction` keeps the default vanilla-focused fallback for stale 20 HP critical-state synchronization.
-  - `TrustRawHealthAt20` trusts the reported 20 HP value for modded active-bleed or custom-injury behavior.
-- Debug logging for status bar creation, filtering, visibility, and camera diagnostics.
+| Setting | Default | Description |
+|:--|:--|:--|
+| `Bar Style` | `Segmented` | `Segmented` ten-cell bars, `Classic` original style |
+| `Show Infection Bars` | `true` | Host setting that decides whether the room shows infection bars |
+| `Max Display Distance` | `18` | Maximum display distance |
+| `Hide In Orbit` | `true` | Hide while the ship is in orbit |
+| `Show Text` | `true` | Show health numbers and infection percentage |
 
-Most options apply at runtime through the generated configuration file.
+Settings are saved to `BepInEx/config/playerstatusbars.cfg` and apply immediately.
 
-## Compatibility Notes
+### Installation
 
-The mod remains usable as a client-side display mod, but some remote values in Lethal Company can be stale or owner-local. When only one player installs the mod, display accuracy is limited to the game state that client can read. When the host and clients install the same version, the mod can exchange compact status messages to improve infection display consistency for observers.
+Install through **r2modman / Thunderstore Mod Manager**. Requires **BepInExPack 5.4.2100**. For a manual install, place `PlayerStatusBars.dll` in `BepInEx/plugins/PlayerStatusBars/`.
 
-For health, the display combines synced raw health, synced critical or bleeding state, damage timestamp changes, and conservative vanilla recovery prediction. This improves common vanilla low-health cases while keeping a compatibility option for mods that intentionally set bleeding or injury states without changing health.
+### Multiplayer
 
-For infection, the display depends on Cadaver Growth's `playerInfections` data. In multiplayer, same-version clients can report their locally accurate Cadaver Growth infection state to the host, which then reflects that state to other same-version observers. Mods that implement a separate infection system without updating Cadaver Growth state remain outside the readable data surface of this mod.
+- **Health bars**: work with a local install; more accurate when the host and that player install it too.
+- **Infection bars**: require the host to install Player Status Bars and enable `Show Infection Bars`.
 
-## Package Layout
+### Compatibility
 
-Repository layout:
+- [LC_Chinese_Project](https://thunderstore.io/c/lethal-company/p/Aueser/LC_Chinese_Project/): Chinese setting names and descriptions are used automatically.
+- [LethalConfig](https://thunderstore.io/c/lethal-company/p/AinaVT/LethalConfig/): change settings in game; changes apply immediately.
 
-```text
-src/
-  Runtime source files
-PlayerStatusBars.csproj
-README.md
-CHANGELOG.md
-LICENSE
-```
+Report problems through [Issues](https://github.com/Auuueser/Player-Status-Bars/issues), including reproduction steps, your mod list and `BepInEx/LogOutput.log`. Licensed under [GPL-3.0](LICENSE).
 
-Thunderstore package layout:
-
-```text
-manifest.json
-README.md
-CHANGELOG.md
-LICENSE
-icon.png
-BepInEx/plugins/PlayerStatusBars/PlayerStatusBars.dll
-```
-
-## License
-
-Player Status Bars is released under the GNU General Public License v3.0. See `LICENSE` for the full license text.
-
-## Third-party Notices
-
-Player Status Bars does not bundle, redistribute, or require MoreCompany or LTC Lobby Control.
-
-- MoreCompany is an independent MIT-licensed project. Its player-slot expansion behavior was reviewed for compatibility hardening; this project does not include MoreCompany code.
-- LTC Lobby Control is an independent MIT-licensed project. Its late-join behavior was reviewed for compatibility hardening; this project does not include LTC Lobby Control code.
+</details>

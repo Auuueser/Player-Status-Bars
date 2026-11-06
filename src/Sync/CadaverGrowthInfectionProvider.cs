@@ -30,11 +30,6 @@ internal static class CadaverGrowthInfectionProvider
 
 	private static float currentAbsentInstanceScanInterval = AbsentInstanceScanIntervalMin;
 
-	public static bool TryGetNormalizedInfection(PlayerControllerB player, out float infectionMeter)
-	{
-		return TryGetNormalizedInfection(player, -1, out infectionMeter);
-	}
-
 	public static bool TryGetNormalizedInfection(PlayerControllerB player, int knownPlayerSlot, out float infectionMeter)
 	{
 		bool hasKnownState = TryGetInfectionState(player, knownPlayerSlot, out bool hasInfection, out infectionMeter);
@@ -140,12 +135,6 @@ internal static class CadaverGrowthInfectionProvider
 		return null;
 	}
 
-	private static bool IsCadaverGrowthInstanceValid(CadaverGrowthAI? cadaverGrowth)
-	{
-		return IsCadaverGrowthInstanceUsable(cadaverGrowth)
-			&& IsCadaverGrowthInSpawnedEnemies(cadaverGrowth);
-	}
-
 	private static bool IsCachedCadaverGrowthInstanceValid(CadaverGrowthAI? cadaverGrowth)
 	{
 		if (!IsCadaverGrowthInstanceUsable(cadaverGrowth))
@@ -162,9 +151,13 @@ internal static class CadaverGrowthInfectionProvider
 		return IsCadaverGrowthInSpawnedEnemies(cadaverGrowth);
 	}
 
+	/// <summary>
+	/// A killed growth stops progressing infections but its RPCs still update them, so isEnemyDead must
+	/// not disqualify it: players can stay infected, or be infected again, for the rest of the round.
+	/// </summary>
 	private static bool IsCadaverGrowthInstanceUsable(CadaverGrowthAI? cadaverGrowth)
 	{
-		if (cadaverGrowth == null || cadaverGrowth.isEnemyDead || !cadaverGrowth.gameObject.activeInHierarchy)
+		if (cadaverGrowth == null || !cadaverGrowth.gameObject.activeInHierarchy)
 		{
 			return false;
 		}
@@ -319,12 +312,6 @@ internal static class CadaverGrowthInfectionProvider
 			meters[index] = meter;
 			actualClientIds[index] = player != null ? player.actualClientId : ulong.MaxValue;
 			playerClientIds[index] = player != null ? (int)player.playerClientId : -1;
-		}
-
-		public bool TryGet(int index, PlayerControllerB player, out float meter)
-		{
-			bool hasKnownState = TryGet(index, player, out bool hasInfection, out meter);
-			return hasKnownState && hasInfection;
 		}
 
 		public bool TryGet(int index, PlayerControllerB player, out bool hasInfection, out float meter)

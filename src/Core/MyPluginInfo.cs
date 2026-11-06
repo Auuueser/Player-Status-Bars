@@ -6,5 +6,5 @@ internal static class MyPluginInfo
 
 	public const string PluginName = "PlayerStatusBars";
 
-	public const string PluginVersion = "0.2.1";
+	public const string PluginVersion = "0.3.0";
 }

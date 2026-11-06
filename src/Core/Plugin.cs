@@ -7,20 +7,16 @@ using UnityEngine;
 
 namespace OtherPlayerStatusBars;
 
+// Soft dependencies only order loading: both mods stay optional, and no version is required of either.
 [BepInPlugin(MyPluginInfo.PluginGuid, MyPluginInfo.PluginName, MyPluginInfo.PluginVersion)]
+[BepInDependency(LethalConfigIntegration.PluginGuid, BepInDependency.DependencyFlags.SoftDependency)]
+[BepInDependency(ChineseProjectDetection.PluginGuid, BepInDependency.DependencyFlags.SoftDependency)]
+[BepInDependency(ChineseProjectDetection.LegacyPluginGuid, BepInDependency.DependencyFlags.SoftDependency)]
 public sealed class Plugin : BaseUnityPlugin
 {
 	private const string RuntimeObjectName = "PlayerStatusBars.Runtime";
 
 	private const string LegacyConfigFileName = "Codex.OtherPlayerStatusBars.cfg";
-
-	private const string LcChineseProjectGuid = "cn.codex.v81testchn";
-
-	private const string LcChineseProjectConfigFileName = "LC Chinese Project.cfg";
-
-	private const string LcChineseProjectPluginDirectoryName = "V81TestChn";
-
-	private const string LcChineseProjectPluginFileName = "V81TestChn.dll";
 
 	private static GameObject? runtimeObject;
 
@@ -30,17 +26,14 @@ public sealed class Plugin : BaseUnityPlugin
 
 	internal static StatusBarConfig Settings { get; private set; } = null!;
 
-	internal static bool UseChineseCriticalLabel { get; private set; }
-
-	internal static bool UseChineseConfigDescriptions { get; private set; }
-
 	private void Awake()
 	{
 		Log = Logger;
 		MigrateLegacyConfigFile();
-		UseChineseConfigDescriptions = DetectLcChineseProject();
-		UseChineseCriticalLabel = UseChineseConfigDescriptions;
-		Settings = StatusBarConfig.Create(Config, UseChineseConfigDescriptions);
+		RemoveObsoleteConfigKeys();
+		bool useChinese = DetectChineseProject();
+		Settings = StatusBarConfig.Create(Config, useChinese);
+		RegisterLethalConfig(useChinese);
 		EnsureRuntimeManager();
 		Config.Save();
 		Log.LogInfo("PlayerStatusBars loaded.");
@@ -80,6 +73,46 @@ public sealed class Plugin : BaseUnityPlugin
 		Log.LogInfo($"Migrated legacy config from {LegacyConfigFileName} to {Path.GetFileName(configPath)}.");
 	}
 
+	private void RemoveObsoleteConfigKeys()
+	{
+		string configPath = Config.ConfigFilePath;
+		if (!File.Exists(configPath))
+		{
+			return;
+		}
+
+		try
+		{
+			if (LegacyConfigCleaner.TryRemoveObsoleteKeys(File.ReadAllLines(configPath), out string[] cleanedLines))
+			{
+				File.WriteAllLines(configPath, cleanedLines);
+				Config.Reload();
+				Log.LogInfo("Removed obsolete settings from the config file.");
+			}
+		}
+		catch (Exception exception) when (exception is IOException || exception is UnauthorizedAccessException)
+		{
+			Log.LogWarning($"Could not remove obsolete settings: {exception.Message}");
+		}
+	}
+
+	private static void RegisterLethalConfig(bool useChinese)
+	{
+		if (!Chainloader.PluginInfos.ContainsKey(LethalConfigIntegration.PluginGuid))
+		{
+			return;
+		}
+
+		try
+		{
+			LethalConfigIntegration.Register(Settings, useChinese);
+		}
+		catch (Exception exception)
+		{
+			Log.LogWarning($"LethalConfig registration failed: {exception.Message}");
+		}
+	}
+
 	private static void EnsureRuntimeManager()
 	{
 		if (runtimeManager != null)
@@ -114,51 +147,36 @@ public sealed class Plugin : BaseUnityPlugin
 		LogDebug("Runtime manager created.");
 	}
 
-	private static bool DetectLcChineseProject()
+	private static bool DetectChineseProject()
 	{
 		foreach (PluginInfo pluginInfo in Chainloader.PluginInfos.Values)
 		{
-			string guid = pluginInfo.Metadata.GUID ?? string.Empty;
-			string name = pluginInfo.Metadata.Name ?? string.Empty;
-			string location = pluginInfo.Location ?? string.Empty;
-			if (IsLcChineseProjectGuid(guid)
-				|| LooksLikeLcChineseProject(name)
-				|| LooksLikeLcChineseProject(location))
+			if (ChineseProjectDetection.Matches(pluginInfo.Metadata.GUID, pluginInfo.Location))
 			{
 				return true;
 			}
 		}
 
-		if (File.Exists(Path.Combine(Paths.ConfigPath, LcChineseProjectConfigFileName)))
+		return HasChineseProjectFiles();
+	}
+
+	/// <summary>Covers a future GUID change, when the soft dependency could no longer order loading.</summary>
+	private static bool HasChineseProjectFiles()
+	{
+		try
 		{
-			return true;
-		}
+			string packageDirectory = Path.Combine(Paths.PluginPath, ChineseProjectDetection.ThunderstoreDirectoryName);
+			if (Directory.Exists(packageDirectory) && Directory.GetFiles(packageDirectory, "*.dll", SearchOption.AllDirectories).Length > 0)
+			{
+				return true;
+			}
 
-		string pluginPath = Path.Combine(Paths.PluginPath, LcChineseProjectPluginDirectoryName, LcChineseProjectPluginFileName);
-		if (File.Exists(pluginPath))
+			return Directory.GetFiles(Paths.PluginPath, ChineseProjectDetection.PluginFileName, SearchOption.AllDirectories).Length > 0;
+		}
+		catch (Exception exception) when (exception is IOException || exception is UnauthorizedAccessException)
 		{
-			return true;
+			Log.LogWarning($"Could not check for LC Chinese Project: {exception.Message}");
+			return false;
 		}
-
-		return false;
 	}
-
-	private static bool IsLcChineseProjectGuid(string guid)
-	{
-		return string.Equals(guid, LcChineseProjectGuid, StringComparison.OrdinalIgnoreCase);
-	}
-
-	private static bool LooksLikeLcChineseProject(string value)
-	{
-		return Contains(value, LcChineseProjectGuid)
-			|| Contains(value, "LC Chinese Project")
-			|| Contains(value, LcChineseProjectPluginDirectoryName)
-			|| Contains(value, LcChineseProjectPluginFileName);
-	}
-
-	private static bool Contains(string value, string term)
-	{
-		return value.IndexOf(term, StringComparison.OrdinalIgnoreCase) >= 0;
-	}
-
 }

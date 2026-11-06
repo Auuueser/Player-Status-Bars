@@ -8,6 +8,10 @@ internal static class StatusBarTextCache
 
 	private static readonly string[] InfectionLabels = BuildInfectionLabels();
 
+	private static readonly string[] NumberLabels = BuildNumberLabels();
+
+	private static readonly string[] PercentLabels = BuildPercentLabels();
+
 	public static string GetHealthLabel(int currentHealth, int maxHealth)
 	{
 		if (maxHealth == 100 && currentHealth >= 0 && currentHealth < HealthLabels.Length)
@@ -26,6 +30,38 @@ internal static class StatusBarTextCache
 		}
 
 		return $"INF {percent}%";
+	}
+
+	public static string GetNumberLabel(int value)
+	{
+		return value >= 0 && value < NumberLabels.Length ? NumberLabels[value] : value.ToString();
+	}
+
+	public static string GetPercentLabel(int percent)
+	{
+		return percent >= 0 && percent < PercentLabels.Length ? PercentLabels[percent] : $"{percent}%";
+	}
+
+	private static string[] BuildNumberLabels()
+	{
+		string[] labels = new string[CachedValueCount];
+		for (int i = 0; i < labels.Length; i++)
+		{
+			labels[i] = i.ToString();
+		}
+
+		return labels;
+	}
+
+	private static string[] BuildPercentLabels()
+	{
+		string[] labels = new string[CachedValueCount];
+		for (int i = 0; i < labels.Length; i++)
+		{
+			labels[i] = $"{i}%";
+		}
+
+		return labels;
 	}
 
 	private static string[] BuildHealthLabels()

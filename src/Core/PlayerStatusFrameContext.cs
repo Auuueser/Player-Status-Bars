@@ -11,7 +11,6 @@ internal readonly struct PlayerStatusFrameContext
 		Camera? viewCamera,
 		bool hasBillboardRotation,
 		Quaternion billboardRotation,
-		bool canShowGroup,
 		Vector3 observerPosition)
 	{
 		Settings = settings;
@@ -19,7 +18,6 @@ internal readonly struct PlayerStatusFrameContext
 		ViewCamera = viewCamera;
 		HasBillboardRotation = hasBillboardRotation;
 		BillboardRotation = billboardRotation;
-		CanShowGroup = canShowGroup;
 		ObserverPosition = observerPosition;
 		MaxDistanceSqr = settings.MaxDistanceSqr;
 		AnchorYOffset = settings.AnchorYOffset;
@@ -35,8 +33,6 @@ internal readonly struct PlayerStatusFrameContext
 	public readonly bool HasBillboardRotation;
 
 	public readonly Quaternion BillboardRotation;
-
-	public readonly bool CanShowGroup;
 
 	public readonly Vector3 ObserverPosition;
 

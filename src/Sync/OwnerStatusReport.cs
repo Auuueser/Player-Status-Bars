@@ -1,13 +1,12 @@
 namespace OtherPlayerStatusBars;
 
-internal readonly struct PlayerStatusSnapshot
+/// <summary>Status a player reported about themselves, as held by the host.</summary>
+internal readonly struct OwnerStatusReport
 {
-	public PlayerStatusSnapshot(ulong actualClientId, int health, bool isDead, bool isCritical, bool isInfectionKnown, bool hasInfection, float infectionMeter, float receivedTime)
+	public OwnerStatusReport(ulong actualClientId, int health, bool isInfectionKnown, bool hasInfection, float infectionMeter, float receivedTime)
 	{
 		ActualClientId = actualClientId;
 		Health = health;
-		IsDead = isDead;
-		IsCritical = isCritical;
 		IsInfectionKnown = isInfectionKnown;
 		HasInfection = hasInfection;
 		InfectionMeter = infectionMeter;
@@ -17,10 +16,6 @@ internal readonly struct PlayerStatusSnapshot
 	public ulong ActualClientId { get; }
 
 	public int Health { get; }
-
-	public bool IsDead { get; }
-
-	public bool IsCritical { get; }
 
 	public bool IsInfectionKnown { get; }
 

@@ -5,7 +5,6 @@
     <TargetFramework>netstandard2.1</TargetFramework>
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <CheckForOverflowUnderflow>false</CheckForOverflowUnderflow>
   </PropertyGroup>
 
@@ -13,11 +12,22 @@
     <LethalCompanyDir Condition="'$(LethalCompanyDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Lethal Company</LethalCompanyDir>
     <ManagedDir Condition="'$(ManagedDir)' == ''">$(LethalCompanyDir)\Lethal Company_Data\Managed</ManagedDir>
     <BepInExDir Condition="'$(BepInExDir)' == ''">$(LethalCompanyDir)\BepInEx</BepInExDir>
+    <LethalConfigDll Condition="'$(LethalConfigDll)' == ''">$(BepInExDir)\plugins\AinaVT-LethalConfig\LethalConfig\LethalConfig.dll</LethalConfigDll>
   </PropertyGroup>
+
+  <!-- Game and mod assemblies already exist at runtime, so the build must not copy them. -->
+  <ItemDefinitionGroup>
+    <Reference>
+      <Private>false</Private>
+    </Reference>
+  </ItemDefinitionGroup>
 
   <ItemGroup>
     <Reference Include="BepInEx">
       <HintPath>$(BepInExDir)\core\BepInEx.dll</HintPath>
+    </Reference>
+    <Reference Include="LethalConfig">
+      <HintPath>$(LethalConfigDll)</HintPath>
     </Reference>
     <Reference Include="Assembly-CSharp">
       <HintPath>$(ManagedDir)\Assembly-CSharp.dll</HintPath>
@@ -49,6 +59,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Remove="obj\**;tmpobj\**;tmpbin\**;tmpbin_sync\**;tmpbin_sync2\**" />
+    <Compile Remove="tmpobj\**;tmpbin\**;tmpbin_sync\**;tmpbin_sync2\**;tests\**;diagnostics\**" />
   </ItemGroup>
 </Project>

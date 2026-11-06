@@ -5,19 +5,13 @@ namespace OtherPlayerStatusBars;
 
 internal static class StatusBarBillboard
 {
+	private const float RotationDeadZoneDegrees = 0.2f;
+
 	private static int cachedCameraFrame = -1;
 
 	private static Camera? cachedCamera;
 
-	internal static void ApplyBillboardRotation(Transform target, Camera? viewCamera)
-	{
-		if (!TryResolveBillboardRotation(viewCamera, out Quaternion rotation))
-		{
-			return;
-		}
-
-		target.rotation = rotation;
-	}
+	private static Quaternion stableRotation = Quaternion.identity;
 
 	internal static bool TryResolveBillboardRotation(Camera? viewCamera, out Quaternion rotation)
 	{
@@ -35,6 +29,12 @@ internal static class StatusBarBillboard
 		}
 
 		rotation = Quaternion.LookRotation(cameraForward, cameraUp);
+		if (Quaternion.Angle(stableRotation, rotation) > RotationDeadZoneDegrees)
+		{
+			stableRotation = rotation;
+		}
+
+		rotation = stableRotation;
 		return true;
 	}
 

@@ -18,15 +18,11 @@ internal sealed class PlayerStatusBarStrip : MonoBehaviour
 
 	private bool visible = true;
 
-	private string label = string.Empty;
-
 	private float currentValue;
 
 	private float maxValue = 1f;
 
 	private bool renderAsPercent;
-
-	private bool labelOnly;
 
 	private StripType stripType;
 
@@ -117,40 +113,19 @@ internal sealed class PlayerStatusBarStrip : MonoBehaviour
 		text.raycastTarget = false;
 	}
 
-	public void SetDisplay(string displayLabel, float value, float max, bool showPercent)
+	public void SetDisplay(float value, float max, bool showPercent)
 	{
 		float clampedValue = Mathf.Clamp(value, 0f, max <= 0f ? 1f : max);
 		float clampedMax = Mathf.Max(max, 0.0001f);
-		if (label == displayLabel && Mathf.Approximately(currentValue, clampedValue) && Mathf.Approximately(maxValue, clampedMax) && renderAsPercent == showPercent && !labelOnly)
+		if (Mathf.Approximately(currentValue, clampedValue) && Mathf.Approximately(maxValue, clampedMax) && renderAsPercent == showPercent)
 		{
 			visible = true;
 			return;
 		}
 
-		label = displayLabel;
 		currentValue = clampedValue;
 		maxValue = clampedMax;
 		renderAsPercent = showPercent;
-		labelOnly = false;
-		visible = true;
-		dirty = true;
-	}
-
-	public void SetLabelOnly(string displayLabel, float fillValue, float max)
-	{
-		float clampedValue = Mathf.Clamp(fillValue, 0f, max <= 0f ? 1f : max);
-		float clampedMax = Mathf.Max(max, 0.0001f);
-		if (label == displayLabel && Mathf.Approximately(currentValue, clampedValue) && Mathf.Approximately(maxValue, clampedMax) && labelOnly)
-		{
-			visible = true;
-			return;
-		}
-
-		label = displayLabel;
-		currentValue = clampedValue;
-		maxValue = clampedMax;
-		renderAsPercent = false;
-		labelOnly = true;
 		visible = true;
 		dirty = true;
 	}
@@ -206,13 +181,11 @@ internal sealed class PlayerStatusBarStrip : MonoBehaviour
 		}
 		Color backgroundColor = settings.GetBackgroundColor();
 		Color borderColor = settings.GetBorderColor();
-		bool showText = stripType == StripType.Health ? settings.ShowHealthText : settings.ShowInfectionText;
+		bool showText = settings.ShowText;
 		string formattedText = string.Empty;
 		if (showText)
 		{
-			formattedText = labelOnly
-				? label
-				: renderAsPercent
+			formattedText = renderAsPercent
 				? StatusBarTextCache.GetInfectionLabel(Mathf.RoundToInt(normalizedValue * 100f))
 				: StatusBarTextCache.GetHealthLabel(Mathf.RoundToInt(currentValue), Mathf.RoundToInt(maxValue));
 		}

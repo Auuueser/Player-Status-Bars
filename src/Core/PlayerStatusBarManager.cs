@@ -33,6 +33,8 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 
 	private int refreshScanCursor;
 
+	private bool displaySuspended;
+
 	private void Start()
 	{
 		Plugin.LogDebug($"Runtime manager started active={gameObject.activeInHierarchy}.");
@@ -41,58 +43,47 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 	private void Update()
 	{
 		StatusBarConfig settings = Plugin.Settings;
-		if (!settings.Enabled)
-		{
-			if (activeBarCount == 0 && Time.unscaledTime < nextRefreshTime)
-			{
-				return;
-			}
-
-			LogDebugBlocked("disabled");
-			ClearBars();
-			PlayerStatusSnapshotSync.ClearSnapshots();
-			CadaverGrowthInfectionProvider.InvalidateAll();
-			ScheduleNextRefresh(hasActiveBars: false);
-			return;
-		}
-
 		StartOfRound? startOfRound = StartOfRound.Instance;
 		PlayerControllerB? localPlayer = GameNetworkManager.Instance != null
 			? GameNetworkManager.Instance.localPlayerController
 			: startOfRound?.localPlayerController;
 		PlayerControllerB[]? allPlayers = startOfRound?.allPlayerScripts;
+
+		// Status sync serves other players, so this client's display settings must not gate it.
+		PlayerStatusSnapshotSync.Tick(startOfRound, allPlayers);
+
+		if (!settings.Enabled)
+		{
+			LogDebugBlocked("disabled");
+			SuspendDisplay();
+			return;
+		}
+
 		if (startOfRound == null || localPlayer == null || allPlayers == null)
 		{
-			if (Time.unscaledTime >= nextRefreshTime)
+			if (settings.DebugLogging)
 			{
-				ScheduleNextRefresh(hasActiveBars: false);
 				LogDebugBlocked($"not-ready startOfRound={startOfRound != null} localPlayer={localPlayer != null} allPlayers={allPlayers != null}");
-				ClearBars();
-				PlayerStatusSnapshotSync.ClearSnapshots();
-				CadaverGrowthInfectionProvider.InvalidateAll();
 			}
 
+			SuspendDisplay();
 			return;
 		}
 
 		EnsureSlotCapacity(allPlayers.Length);
-		bool canShowGroup = !ShouldSkipBarsForShipState(startOfRound);
-		if (!canShowGroup)
+		if (ShouldSkipBarsForShipState(startOfRound))
 		{
-			if (Time.unscaledTime >= nextRefreshTime)
+			if (settings.DebugLogging)
 			{
 				LogDebugBlocked(
 					$"orbit-hidden inShipPhase={startOfRound.inShipPhase} shipHasLanded={startOfRound.shipHasLanded} shipDoorsEnabled={startOfRound.shipDoorsEnabled} shipIsLeaving={startOfRound.shipIsLeaving} dayStarted={TimeOfDay.Instance?.currentDayTimeStarted}");
 			}
 
-			ClearBars();
-			PlayerStatusSnapshotSync.ClearSnapshots();
-			CadaverGrowthInfectionProvider.InvalidateAll();
-			ScheduleNextRefresh(hasActiveBars: false);
+			SuspendDisplay();
 			return;
 		}
 
-		PlayerStatusSnapshotSync.Tick(startOfRound, allPlayers);
+		ResumeDisplay();
 		if (activeBarCount == 0 && Time.unscaledTime < nextRefreshTime)
 		{
 			return;
@@ -108,8 +99,33 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 			return;
 		}
 
-		PlayerStatusFrameContext frameContext = CreateFrameContext(settings, localPlayer, canShowGroup);
+		PlayerStatusFrameContext frameContext = CreateFrameContext(settings, localPlayer);
 		TickTrackedBars(frameContext);
+	}
+
+	private void SuspendDisplay()
+	{
+		if (displaySuspended)
+		{
+			return;
+		}
+
+		displaySuspended = true;
+		ClearBars();
+		PlayerStatusSnapshotSync.ClearSnapshots();
+		CadaverGrowthInfectionProvider.InvalidateAll();
+	}
+
+	private void ResumeDisplay()
+	{
+		if (!displaySuspended)
+		{
+			return;
+		}
+
+		displaySuspended = false;
+		nextRefreshTime = 0f;
+		CadaverGrowthInfectionProvider.InvalidateAll();
 	}
 
 	private void RefreshPlayerSlice(StartOfRound startOfRound, PlayerControllerB localPlayer, PlayerControllerB[] allPlayers)
@@ -299,27 +315,17 @@ internal sealed class PlayerStatusBarManager : MonoBehaviour
 		activeBars = resizedBars;
 	}
 
-	private static PlayerStatusFrameContext CreateFrameContext(StatusBarConfig settings, PlayerControllerB localPlayer, bool canShowGroup)
+	private static PlayerStatusFrameContext CreateFrameContext(StatusBarConfig settings, PlayerControllerB localPlayer)
 	{
-		Camera? viewCamera = null;
-		bool hasBillboardRotation = false;
-		Quaternion billboardRotation = Quaternion.identity;
-		Vector3 observerPosition = localPlayer.transform.position;
-		if (canShowGroup)
-		{
-			viewCamera = StatusBarBillboard.ResolveViewCamera();
-			hasBillboardRotation = StatusBarBillboard.TryResolveBillboardRotation(viewCamera, out billboardRotation);
-			observerPosition = ResolveObserverPosition(localPlayer, viewCamera);
-		}
-
+		Camera? viewCamera = StatusBarBillboard.ResolveViewCamera();
+		bool hasBillboardRotation = StatusBarBillboard.TryResolveBillboardRotation(viewCamera, out Quaternion billboardRotation);
 		return new PlayerStatusFrameContext(
 			settings,
 			localPlayer,
 			viewCamera,
 			hasBillboardRotation,
 			billboardRotation,
-			canShowGroup,
-			observerPosition);
+			ResolveObserverPosition(localPlayer, viewCamera));
 	}
 
 	private static Vector3 ResolveObserverPosition(PlayerControllerB localPlayer, Camera? viewCamera)
